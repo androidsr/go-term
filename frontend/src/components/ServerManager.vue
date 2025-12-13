@@ -29,14 +29,11 @@
 
             <a-layout>
               <a-layout-content class="content">
-                <a-space>
+                <div class="server-header">
                   <a-button v-if="currentGroupId" type="primary" @click="showAddServerModal">
                     <plus-outlined /> 添加服务器
                   </a-button>
-                  <a-button>
-                    <plus-outlined /> 批量脚本
-                  </a-button>
-                </a-space>
+                </div>
 
                 <a-table :dataSource="currentServers" :columns="serverColumns" :pagination="false" rowKey="id" size="small">
                   <template #bodyCell="{ column, record }">
@@ -62,6 +59,11 @@
               </a-layout-content>
             </a-layout>
           </a-layout>
+        </a-tab-pane>
+
+        <!-- 批量脚本标签页 -->
+        <a-tab-pane key="batch-script" tab="批量脚本" :closable="false">
+          <BatchScriptManager />
         </a-tab-pane>
 
         <!-- 终端标签页 -->
@@ -142,6 +144,7 @@ import {
 } from '../../wailsjs/go/controllers/SSHController';
 import Terminal from './Terminal.vue';
 import FileManager from './FileManager.vue';
+import BatchScriptManager from './BatchScriptManager.vue';
 
 export default {
   name: 'ServerManager',
@@ -152,7 +155,8 @@ export default {
     PlusOutlined,
     DownOutlined,
     Terminal,
-    FileManager
+    FileManager,
+    BatchScriptManager
   },
   data() {
     return {

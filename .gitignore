@@ -4,6 +4,7 @@ obj/
 *.exe
 *.out
 *.log
+config/
 *.dmg
 temp/
 # 忽略 Node.js 的依赖和构建文件

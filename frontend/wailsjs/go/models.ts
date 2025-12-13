@@ -19,6 +19,30 @@ export namespace frontend {
 
 export namespace models {
 	
+	export class BatchScript {
+	    id: string;
+	    name: string;
+	    description: string;
+	    content: string;
+	    serverIds: string[];
+	    createdAt: string;
+	    updatedAt: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new BatchScript(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.name = source["name"];
+	        this.description = source["description"];
+	        this.content = source["content"];
+	        this.serverIds = source["serverIds"];
+	        this.createdAt = source["createdAt"];
+	        this.updatedAt = source["updatedAt"];
+	    }
+	}
 	export class Server {
 	    id: string;
 	    name: string;

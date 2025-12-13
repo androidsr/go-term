@@ -4,6 +4,8 @@ import {models} from '../models';
 import {services} from '../models';
 import {context} from '../models';
 
+export function AddBatchScript(arg1:models.BatchScript):Promise<void>;
+
 export function AddServer(arg1:string,arg2:models.Server):Promise<void>;
 
 export function AddServerGroup(arg1:models.ServerGroup):Promise<void>;
@@ -22,6 +24,8 @@ export function CreateTerminalSession(arg1:string):Promise<string>;
 
 export function CreateTerminalSessionWithSize(arg1:string,arg2:number,arg3:number):Promise<string>;
 
+export function DeleteBatchScript(arg1:string):Promise<void>;
+
 export function DeleteFile(arg1:string,arg2:string):Promise<string>;
 
 export function DeleteServer(arg1:string,arg2:string):Promise<void>;
@@ -32,11 +36,15 @@ export function DisconnectFromServer(arg1:string):Promise<string>;
 
 export function DownloadFile(arg1:string,arg2:string,arg3:string):Promise<string>;
 
+export function ExecuteBatchScript(arg1:string):Promise<Record<string, models.ScriptExecution>>;
+
 export function ExecuteCommand(arg1:string,arg2:string):Promise<string>;
 
 export function ExecuteCommandWithoutNewline(arg1:string,arg2:string):Promise<string>;
 
 export function GetAutoCompleteSuggestions(arg1:string,arg2:string):Promise<Array<string>>;
+
+export function GetBatchScripts():Promise<Array<models.BatchScript>>;
 
 export function GetServerGroups():Promise<Array<models.ServerGroup>>;
 
@@ -53,6 +61,8 @@ export function ResizeTerminal(arg1:string,arg2:number,arg3:number):Promise<stri
 export function SetEncryptionConfig(arg1:boolean,arg2:string):Promise<void>;
 
 export function Startup(arg1:context.Context):Promise<void>;
+
+export function UpdateBatchScript(arg1:models.BatchScript):Promise<void>;
 
 export function UpdateServer(arg1:string,arg2:models.Server):Promise<void>;
 

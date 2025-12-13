@@ -19,6 +19,8 @@ import (
 type SSHController struct {
 	ctx              context.Context
 	serverManager    *services.ServerManager
+	scriptManager    *services.ScriptManager
+	scriptParser     *services.ScriptParser
 	connections      map[string]*services.SSHConnection
 	sftpClients      map[string]*sftp.Client
 	terminalSessions map[string]*services.TerminalSession
@@ -47,6 +49,8 @@ func NewSSHController() *SSHController {
 		configFile:       "config/servers.dat", // 默认使用加密文件扩展名
 		useEncryption:    true,                 // 默认启用加密
 		needReencrypt:    false,                // 默认不需要重新加密
+		scriptManager:    services.NewScriptManager(),
+		scriptParser:     services.NewScriptParser(),
 	}
 }
 
@@ -102,6 +106,11 @@ func (sc *SSHController) Startup(ctx context.Context) {
 			fmt.Println("配置文件已从明文格式转换为加密格式")
 			sc.needReencrypt = false
 		}
+	}
+
+	// 加载脚本配置
+	if err := sc.scriptManager.LoadFromFile("config/scripts.json"); err != nil {
+		fmt.Printf("警告: 无法加载脚本配置: %v\n", err)
 	}
 }
 
@@ -830,4 +839,164 @@ func (sc *SSHController) ResizeTerminal(serverID string, width, height int) (str
 	}
 
 	return "终端大小调整成功", nil
+}
+
+// ========== 脚本管理相关方法 ==========
+
+// GetBatchScripts 获取所有批量脚本
+func (sc *SSHController) GetBatchScripts() []models.BatchScript {
+	return sc.scriptManager.GetScripts()
+}
+
+// AddBatchScript 添加批量脚本
+func (sc *SSHController) AddBatchScript(script models.BatchScript) error {
+	return sc.scriptManager.AddScript(script)
+}
+
+// UpdateBatchScript 更新批量脚本
+func (sc *SSHController) UpdateBatchScript(script models.BatchScript) error {
+	return sc.scriptManager.UpdateScript(script)
+}
+
+// DeleteBatchScript 删除批量脚本
+func (sc *SSHController) DeleteBatchScript(scriptID string) error {
+	return sc.scriptManager.DeleteScript(scriptID)
+}
+
+// ExecuteBatchScript 执行批量脚本
+func (sc *SSHController) ExecuteBatchScript(scriptID string) (map[string]models.ScriptExecution, error) {
+	// 获取脚本
+	script, err := sc.scriptManager.GetScriptByID(scriptID)
+	if err != nil {
+		return nil, fmt.Errorf("获取脚本失败: %v", err)
+	}
+
+	// 解析脚本内容为命令列表
+	commands := sc.scriptParser.ParseCommands(script.Content)
+	if len(commands) == 0 {
+		return nil, fmt.Errorf("脚本中没有有效的命令")
+	}
+
+	// 构建在同一会话中执行的完整脚本
+	combinedScript := sc.scriptParser.BuildCombinedScript(commands)
+
+	// 获取所有服务器组以解析服务器名称
+	groups := sc.serverManager.GetGroups()
+	serverMap := make(map[string]string)
+	for _, group := range groups {
+		for _, server := range group.Servers {
+			serverMap[server.ID] = server.Name
+		}
+	}
+
+	// 并发执行脚本
+	results := make(map[string]models.ScriptExecution)
+	var wg sync.WaitGroup
+	var resultMutex sync.Mutex
+
+	for _, serverID := range script.ServerIDs {
+		wg.Add(1)
+		go func(sid string) {
+			defer wg.Done()
+
+			execution := models.ScriptExecution{
+				ID:         fmt.Sprintf("exec_%s_%s_%d", scriptID, sid, time.Now().Unix()),
+				ScriptID:   scriptID,
+				ServerID:   sid,
+				ServerName: serverMap[sid],
+				Status:     "pending",
+				StartTime:  time.Now().Format("2006-01-02 15:04:05"),
+				CommandOutputs: make([]models.CommandOutput, 0),
+			}
+
+			resultMutex.Lock()
+			results[sid] = execution
+			resultMutex.Unlock()
+
+			// 执行完整脚本（所有命令在同一会话中）
+			execution.Status = "running"
+			
+			// 使用ExecuteCommand执行完整脚本
+			output, err := sc.ExecuteCommand(sid, combinedScript)
+			execution.EndTime = time.Now().Format("2006-01-02 15:04:05")
+
+			if err != nil {
+				execution.Status = "failed"
+				execution.Error = err.Error()
+				execution.Output = output
+			} else {
+				execution.Status = "success"
+				execution.Output = output
+			}
+
+			// 解析输出以提取每个命令的结果
+			if output != "" {
+				execution.CommandOutputs = sc.parseCombinedOutput(output, commands)
+			}
+
+			resultMutex.Lock()
+			results[sid] = execution
+			resultMutex.Unlock()
+		}(serverID)
+	}
+
+	wg.Wait()
+	return results, nil
+}
+
+// parseCombinedOutput 解析组合脚本的输出，分离每个命令的结果
+func (sc *SSHController) parseCombinedOutput(output string, commands []string) []models.CommandOutput {
+	var commandOutputs []models.CommandOutput
+	lines := strings.Split(output, "\n")
+	
+	var currentCommand *models.CommandOutput
+	var currentOutput strings.Builder
+	commandIndex := 0
+	
+	for _, line := range lines {
+		// 检查是否是命令开始标记
+		if strings.HasPrefix(line, "[COMMAND ") && strings.Contains(line, "]") {
+			// 保存前一个命令的结果
+			if currentCommand != nil {
+				currentCommand.Output = strings.TrimSpace(currentOutput.String())
+				commandOutputs = append(commandOutputs, *currentCommand)
+			}
+			
+			// 开始新命令
+			if commandIndex < len(commands) {
+				cmdText := strings.TrimPrefix(line, "[COMMAND ")
+				cmdText = strings.TrimSuffix(cmdText, "]")
+				currentCommand = &models.CommandOutput{
+					Command: commands[commandIndex],
+					Status:  "success", // 默认成功，后面可能根据退出码调整
+				}
+				commandIndex++
+				currentOutput.Reset()
+			}
+		} else if strings.HasPrefix(line, "[COMMAND_EXIT_CODE:") {
+			// 解析退出码
+			if currentCommand != nil {
+				exitCodeStr := strings.TrimPrefix(line, "[COMMAND_EXIT_CODE:")
+				exitCodeStr = strings.TrimSuffix(exitCodeStr, "]")
+				if exitCodeStr != "0" {
+					currentCommand.Status = "failed"
+					currentCommand.Error = fmt.Sprintf("命令执行失败，退出码: %s", exitCodeStr)
+				}
+			}
+		} else if strings.HasPrefix(line, "[COMMAND_SEPARATOR]") {
+			// 命令分隔符，继续下一个命令
+			continue
+		} else if currentCommand != nil {
+			// 普通输出行
+			currentOutput.WriteString(line + "\n")
+		}
+	}
+	
+	// 保存最后一个命令的结果
+	if currentCommand != nil {
+		currentCommand.Output = strings.TrimSpace(currentOutput.String())
+		commandOutputs = append(commandOutputs, *currentCommand)
+	}
+	
+	return commandOutputs
 }
