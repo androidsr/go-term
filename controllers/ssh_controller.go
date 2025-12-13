@@ -23,6 +23,12 @@ type SSHController struct {
 	sftpClients      map[string]*sftp.Client
 	terminalSessions map[string]*services.TerminalSession
 
+	// 配置文件相关
+	configFile         string
+	useEncryption      bool
+	encryptionPassword string
+	needReencrypt      bool // 标记是否需要重新加密保存
+
 	// 全局用于保护 map 的读写（短时持有）
 	mutex sync.RWMutex
 
@@ -38,6 +44,22 @@ func NewSSHController() *SSHController {
 		sftpClients:      make(map[string]*sftp.Client),
 		terminalSessions: make(map[string]*services.TerminalSession),
 		perServerLocks:   make(map[string]*sync.Mutex),
+		configFile:       "config/servers.dat", // 默认使用加密文件扩展名
+		useEncryption:    true,                 // 默认启用加密
+		needReencrypt:    false,                // 默认不需要重新加密
+	}
+}
+
+// SetEncryptionConfig 设置加密配置
+func (sc *SSHController) SetEncryptionConfig(useEncryption bool, password string) {
+	sc.useEncryption = useEncryption
+	sc.encryptionPassword = password
+
+	// 根据是否使用加密设置配置文件路径
+	if useEncryption {
+		sc.configFile = "config/servers.dat"
+	} else {
+		sc.configFile = "config/servers.json"
 	}
 }
 
@@ -59,10 +81,36 @@ func (sc *SSHController) Startup(ctx context.Context) {
 	sc.serverManager = services.NewServerManager()
 
 	// 加载服务器配置
-	configFile := "config/servers.json"
-	if err := sc.serverManager.LoadFromFile(configFile); err != nil {
-		fmt.Printf("警告: 无法加载服务器配置: %v\n", err)
+	if sc.useEncryption {
+		// 使用新的加载方法，支持从明文自动转换为加密格式
+		needReencrypt, err := sc.serverManager.LoadFromFileWithFallback(sc.configFile, sc.encryptionPassword)
+		if err != nil {
+			fmt.Printf("警告: 无法加载服务器配置: %v\n", err)
+		}
+		sc.needReencrypt = needReencrypt
+	} else {
+		if err := sc.serverManager.LoadFromFile(sc.configFile); err != nil {
+			fmt.Printf("警告: 无法加载服务器配置: %v\n", err)
+		}
 	}
+
+	// 如果需要重新加密（从明文加载），则保存为加密格式
+	if sc.needReencrypt && sc.useEncryption {
+		if err := sc.saveConfig(); err != nil {
+			fmt.Printf("警告: 无法保存加密配置: %v\n", err)
+		} else {
+			fmt.Println("配置文件已从明文格式转换为加密格式")
+			sc.needReencrypt = false
+		}
+	}
+}
+
+// saveConfig 保存配置的辅助函数
+func (sc *SSHController) saveConfig() error {
+	if sc.useEncryption {
+		return sc.serverManager.SaveToEncryptedFile(sc.configFile, sc.encryptionPassword)
+	}
+	return sc.serverManager.SaveToFile(sc.configFile)
 }
 
 // GetServerGroups 获取所有服务器分组
@@ -81,8 +129,7 @@ func (sc *SSHController) AddServerGroup(group models.ServerGroup) error {
 	sc.serverManager.AddGroup(group)
 
 	// 保存到文件
-	configFile := "config/servers.json"
-	return sc.serverManager.SaveToFile(configFile)
+	return sc.saveConfig()
 }
 
 // UpdateServerGroup 更新服务器分组
@@ -96,8 +143,7 @@ func (sc *SSHController) UpdateServerGroup(group models.ServerGroup) error {
 	}
 
 	// 保存到文件
-	configFile := "config/servers.json"
-	return sc.serverManager.SaveToFile(configFile)
+	return sc.saveConfig()
 }
 
 // DeleteServerGroup 删除服务器分组
@@ -111,8 +157,7 @@ func (sc *SSHController) DeleteServerGroup(groupID string) error {
 	}
 
 	// 保存到文件
-	configFile := "config/servers.json"
-	return sc.serverManager.SaveToFile(configFile)
+	return sc.saveConfig()
 }
 
 // AddServer 添加服务器
@@ -126,8 +171,7 @@ func (sc *SSHController) AddServer(groupID string, server models.Server) error {
 	}
 
 	// 保存到文件
-	configFile := "config/servers.json"
-	return sc.serverManager.SaveToFile(configFile)
+	return sc.saveConfig()
 }
 
 // UpdateServer 更新服务器
@@ -141,8 +185,7 @@ func (sc *SSHController) UpdateServer(groupID string, server models.Server) erro
 	}
 
 	// 保存到文件
-	configFile := "config/servers.json"
-	return sc.serverManager.SaveToFile(configFile)
+	return sc.saveConfig()
 }
 
 // DeleteServer 删除服务器
@@ -156,8 +199,7 @@ func (sc *SSHController) DeleteServer(groupID, serverID string) error {
 	}
 
 	// 保存到文件
-	configFile := "config/servers.json"
-	return sc.serverManager.SaveToFile(configFile)
+	return sc.saveConfig()
 }
 
 // ConnectToServer 连接到服务器

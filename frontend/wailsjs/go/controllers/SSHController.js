@@ -94,6 +94,10 @@ export function ResizeTerminal(arg1, arg2, arg3) {
   return window['go']['controllers']['SSHController']['ResizeTerminal'](arg1, arg2, arg3);
 }
 
+export function SetEncryptionConfig(arg1, arg2) {
+  return window['go']['controllers']['SSHController']['SetEncryptionConfig'](arg1, arg2);
+}
+
 export function Startup(arg1) {
   return window['go']['controllers']['SSHController']['Startup'](arg1);
 }

@@ -11,6 +11,7 @@ Go-Term是一个基于Wails框架开发的跨平台SSH终端管理工具，使�
 - **自动补全**：智能命令和路径自动补全功能
 - **多标签页**：支持同时打开多个终端和文件管理标签页
 - **响应式布局**：自适应窗口大小调整
+- **配置加密**：敏感配置信息加密存储
 
 ## 技术架构
 
@@ -19,6 +20,7 @@ Go-Term是一个基于Wails框架开发的跨平台SSH终端管理工具，使�
 - **Wails框架**：桥接Go后端与前端界面
 - **x/crypto/ssh**：SSH协议实现
 - **pkg/sftp**：SFTP协议实现
+- **x/crypto/scrypt**：配置文件加密
 
 ### 前端技术栈
 - **Vue.js 3**：前端框架
@@ -31,7 +33,7 @@ Go-Term是一个基于Wails框架开发的跨平台SSH终端管理工具，使�
 ```
 go-term/
 ├── config/              # 配置文件目录
-│   └── servers.json     # 服务器配置文件
+│   └── servers.dat      # 加密的服务器配置文件
 ├── controllers/         # 控制器层
 │   └── ssh_controller.go
 ├── frontend/            # 前端代码
@@ -45,6 +47,7 @@ go-term/
 ├── models/              # 数据模型
 │   └── server.go
 ├── services/            # 服务层
+│   ├── encrypted_config.go
 │   ├── server_manager.go
 │   ├── ssh_service.go
 │   └── terminal_session.go
@@ -80,6 +83,11 @@ go-term/
 - 命令自动补全
 - 路径自动补全
 - 智能解析补全建议
+
+### 6. 配置加密模块
+- 使用AES-GCM加密算法保护配置文件
+- 使用scrypt密钥派生函数增强安全性
+- 自动处理配置文件的加密和解密
 
 ## 安装与运行
 
@@ -146,30 +154,14 @@ wails build
 
 ## 配置文件
 
-`servers.json`文件存储了所有服务器和分组的配置信息，格式如下：
+配置文件现在使用加密存储，文件名为`servers.dat`，使用AES-GCM加密算法和scrypt密钥派生函数保护敏感信息。
 
-```json
-{
-  "groups": [
-    {
-      "id": "group1",
-      "name": "分组名称",
-      "servers": [
-        {
-          "id": "server1",
-          "name": "服务器名称",
-          "host": "主机地址",
-          "port": 22,
-          "username": "用户名",
-          "password": "密码",
-          "keyFile": "密钥文件路径",
-          "groupId": "所属分组ID"
-        }
-      ]
-    }
-  ]
-}
+在[main.go](file:///d:/dev/golang/work/go-term/main.go)中设置了加密密码：
+```go
+sshController.SetEncryptionConfig(true, "your-encryption-password-here")
 ```
+
+注意：在生产环境中，应通过环境变量或安全的用户输入方式获取加密密码，而不是硬编码在代码中。
 
 ## 开发说明
 
@@ -185,6 +177,11 @@ wails build
 - 使用读写锁保护共享资源访问
 - 为每个服务器维护独立的互斥锁以避免竞争条件
 - 终端会话采用Channel机制实现异步数据传输
+
+### 安全特性
+- 配置文件加密存储，防止敏感信息泄露
+- 使用行业标准的加密算法（AES-GCM）
+- 使用强密钥派生函数（scrypt）增强密码安全性
 
 ## 许可证
 

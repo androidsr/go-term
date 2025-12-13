@@ -19,6 +19,11 @@ func main() {
 	app := NewApp()
 	sshController := controllers.NewSSHController()
 
+	// 设置加密配置
+	// 注意：在实际应用中，密码不应硬编码在代码中，而应通过环境变量或用户输入获取
+	// 这里仅为演示目的使用固定密码
+	sshController.SetEncryptionConfig(true, "androidsr")
+
 	err := wails.Run(&options.App{
 		Title:  "那个谁SSH终端",
 		Width:  1100,

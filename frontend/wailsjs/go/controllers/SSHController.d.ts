@@ -50,6 +50,8 @@ export function ReadTerminalOutput(arg1:string):Promise<string>;
 
 export function ResizeTerminal(arg1:string,arg2:number,arg3:number):Promise<string>;
 
+export function SetEncryptionConfig(arg1:boolean,arg2:string):Promise<void>;
+
 export function Startup(arg1:context.Context):Promise<void>;
 
 export function UpdateServer(arg1:string,arg2:models.Server):Promise<void>;
