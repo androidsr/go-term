@@ -28,6 +28,7 @@ export namespace models {
 	    password: string;
 	    keyFile: string;
 	    groupId: string;
+	    note: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new Server(source);
@@ -43,6 +44,7 @@ export namespace models {
 	        this.password = source["password"];
 	        this.keyFile = source["keyFile"];
 	        this.groupId = source["groupId"];
+	        this.note = source["note"];
 	    }
 	}
 	export class ServerGroup {

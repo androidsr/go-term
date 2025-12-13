@@ -17,4 +17,5 @@ type Server struct {
 	Password string `json:"password"`
 	KeyFile  string `json:"keyFile"` // SSH密钥文件路径
 	GroupID  string `json:"groupId"`
+	Note     string `json:"note"`   // 备注信息
 }

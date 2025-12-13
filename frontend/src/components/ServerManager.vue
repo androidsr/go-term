@@ -29,13 +29,16 @@
 
             <a-layout>
               <a-layout-content class="content">
-                <div class="server-header">
+                <a-space>
                   <a-button v-if="currentGroupId" type="primary" @click="showAddServerModal">
                     <plus-outlined /> 添加服务器
                   </a-button>
-                </div>
+                  <a-button>
+                    <plus-outlined /> 批量脚本
+                  </a-button>
+                </a-space>
 
-                <a-table :dataSource="currentServers" :columns="serverColumns" :pagination="false" rowKey="id">
+                <a-table :dataSource="currentServers" :columns="serverColumns" :pagination="false" rowKey="id" size="small">
                   <template #bodyCell="{ column, record }">
                     <template v-if="column.dataIndex === 'status'">
                       <a-tag :color="record.connected ? 'green' : 'red'">
@@ -84,7 +87,7 @@
 
     <!-- 添加/编辑服务器模态框 -->
     <a-modal v-model:open="serverModalVisible" :title="editingServer ? '编辑服务器' : '添加服务器'" @ok="handleServerModalOk">
-      <a-form :model="serverForm" layout="vertical">
+      <a-form :model="serverForm" :labelCol="{ span: 5 }">
         <a-form-item label="服务器名称" required>
           <a-input v-model:value="serverForm.name" placeholder="请输入服务器名称" />
         </a-form-item>
@@ -108,6 +111,9 @@
         </a-form-item>
         <a-form-item v-if="authMethod === 'key'" label="私钥文件路径">
           <a-input v-model:value="serverForm.keyFile" placeholder="请输入私钥文件路径" />
+        </a-form-item>
+        <a-form-item label="备注">
+          <a-textarea v-model:value="serverForm.note" placeholder="请输入备注信息（可选）" :rows="3" />
         </a-form-item>
       </a-form>
     </a-modal>
@@ -175,9 +181,10 @@ export default {
         name: '',
         host: '',
         port: 22,
-        username: '',
+        username: 'root',
         password: '',
-        keyFile: ''
+        keyFile: '',
+        note: ''
       },
 
       serverColumns: [
@@ -297,7 +304,8 @@ export default {
         port: 22,
         username: '',
         password: '',
-        keyFile: ''
+        keyFile: '',
+        note: ''
       };
       this.authMethod = 'password';
       this.serverModalVisible = true;
@@ -332,6 +340,7 @@ export default {
           username: form.username,
           password: this.authMethod === 'password' ? form.password : '',
           keyFile: this.authMethod === 'key' ? form.keyFile : '',
+          note: form.note || '',
           groupId: this.currentGroupId
         };
 
@@ -553,12 +562,5 @@ export default {
 .content {
   padding: 16px;
   background: #fff;
-}
-
-.server-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 16px;
 }
 </style>
