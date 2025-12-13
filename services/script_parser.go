@@ -80,17 +80,24 @@ func (sp *ScriptParser) BuildCombinedScript(commands []ParsedCommand) string {
 	for i, command := range commands {
 		// 为每个命令添加标识，便于输出解析
 		script.WriteString(fmt.Sprintf("echo \"[COMMAND %d] %s\"\n", i+1, command.Command))
-		script.WriteString(command.Command)
-		script.WriteString("\n")
-		script.WriteString("EXIT_CODE=$?\n")
-		script.WriteString("echo \"[COMMAND_EXIT_CODE:$EXIT_CODE]\"\n") // 记录退出码
 
 		// 如果命令没有设置继续执行标记，则在失败时退出脚本
 		if !command.ContinueOnError {
+			// 执行命令并检查退出码
+			script.WriteString(command.Command)
+			script.WriteString("\n")
+			script.WriteString("EXIT_CODE=$?\n")
+			script.WriteString("echo \"[COMMAND_EXIT_CODE:$EXIT_CODE]\"\n") // 记录退出码
 			script.WriteString("if [ $EXIT_CODE -ne 0 ]; then\n")
 			script.WriteString("  echo \"[COMMAND_STOPPED_DUE_TO_FAILURE]\"\n")
 			script.WriteString("  exit $EXIT_CODE\n")
 			script.WriteString("fi\n")
+		} else {
+			// 对于带有$ne标记的命令，即使失败也继续执行
+			script.WriteString(command.Command)
+			script.WriteString("\n")
+			script.WriteString("EXIT_CODE=$?\n")
+			script.WriteString("echo \"[COMMAND_EXIT_CODE:$EXIT_CODE]\"\n") // 记录退出码
 		}
 
 		script.WriteString("echo \"[COMMAND_SEPARATOR]\"\n") // 命令分隔符
