@@ -1,0 +1,564 @@
+<template>
+  <div>
+    <div class="main-tabs-container">
+      <a-tabs v-model:activeKey="activeKey" size="small" :destroyInactiveTabPane="true" :hideAdd="true"
+        type="editable-card" @edit="closeTerminalTab" @change="onTabChange">
+        <!-- 主页标签页 - 服务器管理 -->
+        <a-tab-pane key="home" tab="主页" :closable="false">
+          <a-layout class="layout">
+            <a-layout-sider width="270" class="sider">
+              <div class="group-section">
+                <div class="group-header">
+                  <h3>服务器分组</h3>
+                  <a-button type="primary" size="small" @click="showAddGroupModal">+</a-button>
+                </div>
+                <a-menu :selectedKeys="selectedGroupKeys" mode="inline" @select="onGroupSelect">
+                  <a-menu-item v-for="group in groups" :key="group.id">
+                    <template #icon>
+                      <folder-outlined />
+                    </template>
+                    {{ group.name }}
+                    <span class="group-actions">
+                      <edit-outlined @click.stop="editGroup(group)" />
+                      <delete-outlined @click.stop="deleteGroup(group.id)" />
+                    </span>
+                  </a-menu-item>
+                </a-menu>
+              </div>
+            </a-layout-sider>
+
+            <a-layout>
+              <a-layout-content class="content">
+                <div class="server-header">
+                  <a-button v-if="currentGroupId" type="primary" @click="showAddServerModal">
+                    <plus-outlined /> 添加服务器
+                  </a-button>
+                </div>
+
+                <a-table :dataSource="currentServers" :columns="serverColumns" :pagination="false" rowKey="id">
+                  <template #bodyCell="{ column, record }">
+                    <template v-if="column.dataIndex === 'status'">
+                      <a-tag :color="record.connected ? 'green' : 'red'">
+                        {{ record.connected ? '已连接' : '未连接' }}
+                      </a-tag>
+                    </template>
+                    <template v-else-if="column.dataIndex === 'action'">
+                      <a-space>
+                        <a-button size="small" :type="record.connected ? 'default' : 'primary'"
+                          @click="connectServer(record)" :loading="record.loading">
+                          {{ record.connected ? '断开' : '连接' }}
+                        </a-button>
+                        <a-button size="small" :disabled="!record.connected" @click="openTerminal(record)">终端</a-button>
+                        <a-button size="small" :disabled="!record.connected" @click="manageFiles(record)">文件</a-button>
+                        <a-button size="small" :disabled="record.connected" @click="editServer(record)">编辑</a-button>
+                        <a-button size="small" :disabled="record.connected" @click="deleteServer(record)">删除</a-button>
+                      </a-space>
+                    </template>
+                  </template>
+                </a-table>
+              </a-layout-content>
+            </a-layout>
+          </a-layout>
+        </a-tab-pane>
+
+        <!-- 终端标签页 -->
+        <a-tab-pane v-for="tab in terminalTabs" :key="tab.id" :tab="tab.title" closable>
+          <div v-if="tab.type === 'terminal'" style="height: 100%; background: #1e1e1e; padding: 0; margin: 0">
+            <Terminal :server="tab.server" :server-id="tab.serverId" />
+          </div>
+          <div v-else-if="tab.type === 'file'" style="height: 100%; padding: 0; margin: 0">
+            <FileManager :server="tab.server" :server-id="tab.serverId" />
+          </div>
+        </a-tab-pane>
+      </a-tabs>
+    </div>
+
+    <!-- 添加/编辑分组模态框 -->
+    <a-modal v-model:open="groupModalVisible" :title="editingGroup ? '编辑分组' : '添加分组'" @ok="handleGroupModalOk">
+      <a-form :model="groupForm" layout="vertical">
+        <a-form-item label="分组名称" required>
+          <a-input v-model:value="groupForm.name" placeholder="请输入分组名称" />
+        </a-form-item>
+      </a-form>
+    </a-modal>
+
+    <!-- 添加/编辑服务器模态框 -->
+    <a-modal v-model:open="serverModalVisible" :title="editingServer ? '编辑服务器' : '添加服务器'" @ok="handleServerModalOk">
+      <a-form :model="serverForm" layout="vertical">
+        <a-form-item label="服务器名称" required>
+          <a-input v-model:value="serverForm.name" placeholder="请输入服务器名称" />
+        </a-form-item>
+        <a-form-item label="主机地址" required>
+          <a-input v-model:value="serverForm.host" placeholder="请输入主机地址" />
+        </a-form-item>
+        <a-form-item label="端口" required>
+          <a-input-number v-model:value="serverForm.port" :min="1" :max="65535" style="width: 100%" />
+        </a-form-item>
+        <a-form-item label="用户名" required>
+          <a-input v-model:value="serverForm.username" placeholder="请输入用户名" />
+        </a-form-item>
+        <a-form-item label="认证方式">
+          <a-radio-group v-model:value="authMethod">
+            <a-radio value="password">密码</a-radio>
+            <a-radio value="key">密钥</a-radio>
+          </a-radio-group>
+        </a-form-item>
+        <a-form-item v-if="authMethod === 'password'" label="密码">
+          <a-input-password v-model:value="serverForm.password" placeholder="请输入密码" />
+        </a-form-item>
+        <a-form-item v-if="authMethod === 'key'" label="私钥文件路径">
+          <a-input v-model:value="serverForm.keyFile" placeholder="请输入私钥文件路径" />
+        </a-form-item>
+      </a-form>
+    </a-modal>
+  </div>
+</template>
+
+<script>
+import {
+  DeleteOutlined,
+  DownOutlined,
+  EditOutlined,
+  FolderOutlined,
+  PlusOutlined
+} from '@ant-design/icons-vue';
+import {
+  AddServer,
+  AddServerGroup,
+  CloseTerminalSession,
+  ConnectToServer,
+  DeleteServer,
+  DeleteServerGroup,
+  DisconnectFromServer,
+  GetServerGroups,
+  UpdateServer,
+  UpdateServerGroup
+} from '../../wailsjs/go/controllers/SSHController';
+import Terminal from './Terminal.vue';
+import FileManager from './FileManager.vue';
+
+export default {
+  name: 'ServerManager',
+  components: {
+    FolderOutlined,
+    EditOutlined,
+    DeleteOutlined,
+    PlusOutlined,
+    DownOutlined,
+    Terminal,
+    FileManager
+  },
+  data() {
+    return {
+      loading: false,
+      groups: [],
+      selectedGroupKeys: [],
+      currentGroupId: '',
+      currentGroupName: '请选择分组',
+      currentServers: [],
+      activeKey: 'home',
+      terminalTabs: [],
+      closedSessions: new Set(),
+
+      // 分组模态框
+      groupModalVisible: false,
+      editingGroup: null,
+      groupForm: {
+        name: ''
+      },
+
+      // 服务器模态框
+      serverModalVisible: false,
+      editingServer: null,
+      authMethod: 'password',
+      serverForm: {
+        name: '',
+        host: '',
+        port: 22,
+        username: '',
+        password: '',
+        keyFile: ''
+      },
+
+      serverColumns: [
+        { title: '服务器名称', dataIndex: 'name', key: 'name' },
+        { title: '主机地址', dataIndex: 'host', key: 'host' },
+        { title: '端口', dataIndex: 'port', key: 'port' },
+        { title: '状态', dataIndex: 'status', key: 'status' },
+        { title: '操作', dataIndex: 'action', key: 'action' }
+      ]
+    };
+  },
+  async mounted() {
+    await this.loadServerGroups();
+  },
+  beforeUnmount() {
+    this.terminalTabs = [];
+  },
+  methods: {
+    async loadServerGroups() {
+      try {
+        this.groups = await GetServerGroups();
+        this.groups.forEach(group => {
+          group.servers.forEach(server => {
+            server.connected = false;
+          });
+        });
+        this.closedSessions.clear();
+      } catch (error) {
+        console.error('加载服务器分组失败:', error);
+      }
+    },
+
+    onGroupSelect(info) {
+      const selectedKeys = info.selectedKeys;
+      if (selectedKeys.length > 0) {
+        const groupId = selectedKeys[0];
+        this.selectedGroupKeys = [groupId];
+        this.currentGroupId = groupId;
+
+        const group = this.groups.find(g => g.id === groupId);
+        if (group) {
+          this.currentGroupName = group.name;
+          this.currentServers = [...group.servers];
+        }
+      }
+    },
+
+    showAddGroupModal() {
+      this.editingGroup = null;
+      this.groupForm.name = '';
+      this.groupModalVisible = true;
+    },
+
+    editGroup(group) {
+      this.editingGroup = group;
+      this.groupForm.name = group.name;
+      this.groupModalVisible = true;
+    },
+
+    async handleGroupModalOk() {
+      if (!this.groupForm.name.trim()) {
+        this.$message.warning('请输入分组名称');
+        return;
+      }
+
+      try {
+        const groupData = {
+          id: this.editingGroup ? this.editingGroup.id : 'group_' + Date.now(),
+          name: this.groupForm.name,
+          servers: this.editingGroup ? this.editingGroup.servers : []
+        };
+
+        if (this.editingGroup) {
+          await UpdateServerGroup(groupData);
+        } else {
+          await AddServerGroup(groupData);
+        }
+
+        this.groupModalVisible = false;
+        await this.loadServerGroups();
+        this.$message.success(`${this.editingGroup ? '更新' : '添加'}分组成功`);
+      } catch (error) {
+        console.error(`${this.editingGroup ? '更新' : '添加'}分组失败:`, error);
+        this.$message.error(`${this.editingGroup ? '更新' : '添加'}分组失败: ${error.message}`);
+      }
+    },
+
+    async deleteGroup(groupId) {
+      try {
+        await new Promise((resolve, reject) => {
+          this.$confirm({
+            title: '确认删除',
+            content: '确定要删除这个分组吗？分组内的服务器也将被删除。',
+            okText: '确认',
+            cancelText: '取消',
+            onOk: () => resolve(),
+            onCancel: () => reject('cancel')
+          });
+        });
+
+        await DeleteServerGroup(groupId);
+        await this.loadServerGroups();
+        this.$message.success('删除分组成功');
+      } catch (error) {
+        if (error !== 'cancel') {
+          console.error('删除分组失败:', error);
+          this.$message.error(`删除分组失败: ${error.message}`);
+        }
+      }
+    },
+
+    showAddServerModal() {
+      this.editingServer = null;
+      this.serverForm = {
+        name: '',
+        host: '',
+        port: 22,
+        username: '',
+        password: '',
+        keyFile: ''
+      };
+      this.authMethod = 'password';
+      this.serverModalVisible = true;
+    },
+
+    editServer(server) {
+      this.editingServer = server;
+      this.serverForm = { ...server };
+      this.authMethod = server.keyFile ? 'key' : 'password';
+      this.serverModalVisible = true;
+    },
+
+    async handleServerModalOk() {
+      const form = this.serverForm;
+      if (
+        !form.name?.trim() ||
+        !form.host?.trim() ||
+        !form.username?.trim() ||
+        (this.authMethod === 'password' && !form.password?.trim()) ||
+        (this.authMethod === 'key' && !form.keyFile?.trim())
+      ) {
+        this.$message.warning('请填写所有必填字段');
+        return;
+      }
+
+      try {
+        const serverData = {
+          id: this.editingServer ? this.editingServer.id : 'server_' + Date.now(),
+          name: form.name,
+          host: form.host,
+          port: form.port,
+          username: form.username,
+          password: this.authMethod === 'password' ? form.password : '',
+          keyFile: this.authMethod === 'key' ? form.keyFile : '',
+          groupId: this.currentGroupId
+        };
+
+        if (this.editingServer) {
+          await UpdateServer(this.currentGroupId, serverData);
+        } else {
+          await AddServer(this.currentGroupId, serverData);
+        }
+
+        this.serverModalVisible = false;
+        await this.loadServerGroups();
+        const group = this.groups.find(g => g.id === this.currentGroupId);
+        if (group) {
+          this.currentServers = [...group.servers];
+        }
+        this.$message.success(`${this.editingServer ? '更新' : '添加'}服务器成功`);
+      } catch (error) {
+        console.error(`${this.editingServer ? '更新' : '添加'}服务器失败:`, error);
+        this.$message.error(`${this.editingServer ? '更新' : '添加'}服务器失败: ${error.message}`);
+      }
+    },
+
+    async deleteServer(server) {
+      try {
+        await new Promise((resolve, reject) => {
+          this.$confirm({
+            title: '确认删除',
+            content: '确定要删除这个服务器吗？',
+            okText: '确认',
+            cancelText: '取消',
+            onOk: () => resolve(),
+            onCancel: () => reject('cancel')
+          });
+        });
+
+        await DeleteServer(server.groupId, server.id);
+        await this.loadServerGroups();
+        const group = this.groups.find(g => g.id === this.currentGroupId);
+        if (group) {
+          this.currentServers = [...group.servers];
+        }
+        this.$message.success('删除服务器成功');
+      } catch (error) {
+        if (error !== 'cancel') {
+          console.error('删除服务器失败:', error);
+          this.$message.error(`删除服务器失败: ${error.message}`);
+        }
+      }
+    },
+
+    async connectServer(server) {
+      try {
+        server.loading = true;
+        if (server.connected) {
+          const result = await DisconnectFromServer(server.id);
+          server.connected = false;
+          if (result && !result.includes('EOF') && !result.includes('断开')) {
+            this.$message.success(result);
+          }
+          this.closedSessions.delete(server.id);
+        } else {
+          const result = await ConnectToServer(server.id);
+          server.connected = true;
+          this.$message.success(result);
+        }
+        server.loading = false;
+      } catch (error) {
+        server.loading = false;
+        console.error('连接/断开服务器失败:', error);
+        if (server.connected) {
+          if (error.message && !error.message.includes('EOF') && !error.message.includes('断开')) {
+            this.$message.error(`断开服务器连接失败: ${error.message}`);
+          }
+        } else {
+          this.$message.error(`连接服务器失败: ${error.message}`);
+        }
+      }
+    },
+
+    async openTerminal(server) {
+      const existingTab = this.terminalTabs.find(
+        tab => tab.serverId === server.id && tab.type === 'terminal'
+      );
+      if (existingTab) {
+        this.activeKey = existingTab.id;
+        return;
+      }
+
+      if (!server.connected) {
+        try {
+          const result = await ConnectToServer(server.id);
+          server.connected = true;
+          this.$message.success(result);
+        } catch (error) {
+          console.error('连接服务器失败:', error);
+          this.$message.error(`连接服务器失败: ${error.message}`);
+          return;
+        }
+      }
+
+      this.closedSessions.delete(server.id);
+
+      const tabId = `terminal_${server.id}`;
+      const newTab = {
+        id: tabId,
+        serverId: server.id,
+        server: server,
+        title: server.name,
+        type: 'terminal'
+      };
+      this.terminalTabs.push(newTab);
+      this.$nextTick(() => {
+        this.activeKey = newTab.id;
+      });
+    },
+
+    async closeTerminalTab(targetKey, action) {
+      if (action !== 'remove') return;
+
+      const tabIndex = this.terminalTabs.findIndex(tab => tab.id === targetKey);
+      if (tabIndex === -1) return;
+
+      const tab = this.terminalTabs[tabIndex];
+
+      if (!this.closedSessions.has(tab.serverId)) {
+        this.closedSessions.add(tab.serverId);
+        try {
+          const result = await CloseTerminalSession(tab.serverId);
+          console.log(`终端会话 ${tab.serverId} 已关闭: ${result}`);
+        } catch (error) {
+          console.error('关闭终端会话失败:', error);
+          if (error.message && !error.message.includes('EOF') && !error.message.includes('断开')) {
+            this.$message.error(`关闭终端会话失败: ${error.message}`);
+          }
+        }
+      }
+
+      this.$nextTick(() => {
+        if (!this.$el) return;
+        this.terminalTabs.splice(tabIndex, 1);
+        this.activeKey = this.terminalTabs.length > 0 ? this.terminalTabs[0].id : 'home';
+      });
+    },
+
+    onTabChange(activeKey) {
+      this.activeKey = activeKey;
+    },
+
+    manageFiles(server) {
+      const existingTab = this.terminalTabs.find(
+        tab => tab.serverId === server.id && tab.type === 'file'
+      );
+      if (existingTab) {
+        this.activeKey = existingTab.id;
+        return;
+      }
+
+      if (!server.connected) {
+        this.$message.warning('请先连接服务器');
+        return;
+      }
+
+      const tabId = `file_${server.id}`;
+      const newTab = {
+        id: tabId,
+        serverId: server.id,
+        server: server,
+        title: `${server.name} - 文件管理`,
+        type: 'file'
+      };
+
+      this.terminalTabs.push(newTab);
+      this.$nextTick(() => {
+        this.activeKey = tabId;
+      });
+    }
+  }
+};
+</script>
+
+<style scoped>
+.main-tabs-container {
+  height: 100%;
+}
+
+.layout {
+  height: 100%;
+}
+
+.sider {
+  background: #fff;
+  border-right: 1px solid #f0f0f0;
+}
+
+.group-section {
+  padding: 16px;
+}
+
+.group-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 16px;
+}
+
+.group-header h3 {
+  margin: 0;
+}
+
+.group-actions {
+  float: right;
+}
+
+.group-actions .anticon {
+  margin-left: 8px;
+  cursor: pointer;
+}
+
+.content {
+  padding: 16px;
+  background: #fff;
+}
+
+.server-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 16px;
+}
+</style>
