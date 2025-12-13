@@ -920,18 +920,66 @@ func (sc *SSHController) ExecuteBatchScript(scriptID string) (map[string]models.
 			output, err := sc.ExecuteCommand(sid, combinedScript)
 			execution.EndTime = time.Now().Format("2006-01-02 15:04:05")
 
-			if err != nil {
-				execution.Status = "failed"
-				execution.Error = err.Error()
-				execution.Output = output
-			} else {
-				execution.Status = "success"
-				execution.Output = output
-			}
-
-			// 解析输出以提取每个命令的结果
+			// 解析输出以提取每个命令的结果（无论是否有执行错误）
 			if output != "" {
-				execution.CommandOutputs = sc.parseCombinedOutput(output, commands)
+				execution.CommandOutputs = sc.parseCombinedOutputWithFallback(output, commands, err)
+				
+				// 检查是否有失败的命令
+				hasFailedCommand := false
+				for _, cmdOutput := range execution.CommandOutputs {
+					if cmdOutput.Status == "failed" {
+						hasFailedCommand = true
+						break
+					}
+				}
+				
+				// 根据解析结果设置执行状态
+				if err != nil {
+					execution.Status = "failed"
+					// 如果有具体的命令失败信息，使用命令失败信息；否则使用执行错误信息
+					if hasFailedCommand {
+						for i, cmdOutput := range execution.CommandOutputs {
+							if cmdOutput.Status == "failed" {
+								execution.Error = fmt.Sprintf("第%d行命令失败: %s", i+1, cmdOutput.Command)
+								break
+							}
+						}
+					} else {
+						execution.Error = fmt.Sprintf("执行错误: %v", err)
+					}
+					execution.Output = output
+				} else if hasFailedCommand {
+					execution.Status = "failed"
+					for i, cmdOutput := range execution.CommandOutputs {
+						if cmdOutput.Status == "failed" {
+							execution.Error = fmt.Sprintf("第%d行命令失败: %s", i+1, cmdOutput.Command)
+							break
+						}
+					}
+				} else {
+					execution.Status = "success"
+				}
+				
+				// 在总输出中标记失败位置
+				for i, cmdOutput := range execution.CommandOutputs {
+					if cmdOutput.Status == "failed" {
+						// 在总输出中添加失败位置标记
+						failureMarker := fmt.Sprintf("\n\n=== 执行失败 ===\n第%d行命令: %s\n错误: %s\n", 
+							i+1, cmdOutput.Command, cmdOutput.Error)
+						execution.Output += failureMarker
+						break // 只标记第一个失败的命令
+					}
+				}
+			} else {
+				// 没有输出，可能是执行错误
+				if err != nil {
+					execution.Status = "failed"
+					execution.Error = fmt.Sprintf("执行错误: %v", err)
+					execution.Output = ""
+				} else {
+					execution.Status = "success"
+					execution.Output = ""
+				}
 			}
 
 			resultMutex.Lock()
@@ -980,7 +1028,9 @@ func (sc *SSHController) parseCombinedOutput(output string, commands []string) [
 				exitCodeStr = strings.TrimSuffix(exitCodeStr, "]")
 				if exitCodeStr != "0" {
 					currentCommand.Status = "failed"
-					currentCommand.Error = fmt.Sprintf("命令执行失败，退出码: %s", exitCodeStr)
+					// 清楚显示失败的具体命令行
+					currentCommand.Error = fmt.Sprintf("命令执行失败 (第%d行): %s (退出码: %s)", 
+						commandIndex, currentCommand.Command, exitCodeStr)
 				}
 			}
 		} else if strings.HasPrefix(line, "[COMMAND_SEPARATOR]") {
@@ -996,6 +1046,84 @@ func (sc *SSHController) parseCombinedOutput(output string, commands []string) [
 	if currentCommand != nil {
 		currentCommand.Output = strings.TrimSpace(currentOutput.String())
 		commandOutputs = append(commandOutputs, *currentCommand)
+	}
+	
+	return commandOutputs
+}
+
+// parseCombinedOutputWithFallback 带备用方案的输出解析
+func (sc *SSHController) parseCombinedOutputWithFallback(output string, commands []string, execError error) []models.CommandOutput {
+	// 先尝试正常解析
+	commandOutputs := sc.parseCombinedOutput(output, commands)
+	
+	// 如果解析失败（没有解析到任何命令），使用备用方案
+	if len(commandOutputs) == 0 && len(commands) > 0 {
+		commandOutputs = sc.createFallbackCommandOutputs(commands, output, execError)
+	}
+	
+	return commandOutputs
+}
+
+// createFallbackCommandOutputs 在解析失败时创建备用命令输出
+func (sc *SSHController) createFallbackCommandOutputs(commands []string, rawOutput string, execError error) []models.CommandOutput {
+	var commandOutputs []models.CommandOutput
+	now := time.Now().Format("2006-01-02 15:04:05")
+	
+	// 检查原始输出中是否有错误信息来定位失败的命令
+	outputLower := strings.ToLower(rawOutput)
+	failedIndex := -1
+	
+	// 尝试从输出中找到第一个失败的命令
+	for i, command := range commands {
+		commandLower := strings.ToLower(command)
+		if strings.Contains(outputLower, "command not found") && 
+		   strings.Contains(outputLower, strings.Fields(commandLower)[0]) {
+			failedIndex = i
+			break
+		}
+		if strings.Contains(outputLower, "no such file") && 
+		   strings.Contains(outputLower, strings.Fields(commandLower)[len(strings.Fields(commandLower))-1]) {
+			failedIndex = i
+			break
+		}
+	}
+	
+	// 如果没有找到明确的失败位置，但执行有错误，假设第一个命令失败
+	if failedIndex == -1 && execError != nil {
+		failedIndex = 0
+	}
+	
+	// 根据原始输出和错误信息判断可能的失败位置
+	for i, command := range commands {
+		status := "success"
+		cmdOutput := models.CommandOutput{
+			Command:   command,
+			Status:    status,
+			StartTime: now,
+			EndTime:    now,
+		}
+		
+		if i == failedIndex {
+			cmdOutput.Status = "failed"
+			if execError != nil {
+				cmdOutput.Error = fmt.Sprintf("第%d行命令执行失败: %s (错误: %s)", 
+					i+1, command, execError.Error())
+			} else {
+				cmdOutput.Error = fmt.Sprintf("第%d行命令执行失败: %s", 
+					i+1, command)
+			}
+			cmdOutput.Output = rawOutput
+		} else if execError != nil && failedIndex != -1 && i > failedIndex {
+			// 如果前面的命令失败了，后面的命令可能没有执行
+			cmdOutput.Status = "unknown"
+			cmdOutput.Error = fmt.Sprintf("第%d行命令可能未执行（前面的命令失败）", i+1)
+		} else if failedIndex == -1 {
+			// 如果没有明确失败但解析失败
+			cmdOutput.Status = "unknown"
+			cmdOutput.Error = "无法解析此命令的输出"
+		}
+		
+		commandOutputs = append(commandOutputs, cmdOutput)
 	}
 	
 	return commandOutputs

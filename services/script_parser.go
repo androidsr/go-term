@@ -73,7 +73,8 @@ func (sp *ScriptParser) BuildCombinedScript(commands []string) string {
 	// 构建一个完整的shell脚本，确保所有命令在同一会话中执行
 	var script strings.Builder
 	script.WriteString("#!/bin/bash\n")
-	script.WriteString("set -e  # 遇到错误时退出\n")
+	// 注释掉 set -e，这样即使某个命令失败，后续命令也会继续执行，便于我们记录所有结果
+	// script.WriteString("set -e  # 遇到错误时退出\n")
 	script.WriteString("\n")
 	
 	for i, command := range commands {
@@ -81,7 +82,8 @@ func (sp *ScriptParser) BuildCombinedScript(commands []string) string {
 		script.WriteString(fmt.Sprintf("echo \"[COMMAND %d] %s\"\n", i+1, command))
 		script.WriteString(command)
 		script.WriteString("\n")
-		script.WriteString("echo \"[COMMAND_EXIT_CODE:$?]\"\n")  // 记录退出码
+		script.WriteString("EXIT_CODE=$?\n")
+		script.WriteString("echo \"[COMMAND_EXIT_CODE:$EXIT_CODE]\"\n")  // 记录退出码
 		script.WriteString("echo \"[COMMAND_SEPARATOR]\"\n")     // 命令分隔符
 		script.WriteString("\n")
 	}
