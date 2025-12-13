@@ -31,10 +31,10 @@
         </template>
         <template v-else-if="column.dataIndex === 'action'">
           <a-space>
-            <a-button size="small" @click="editScript(record)">编辑</a-button>
-            <a-button size="small" type="primary" @click="executeScript(record)" :loading="executingScriptId === record.id">
+              <a-button size="small" type="primary" @click="executeScript(record)" :loading="executingScriptId === record.id">
               执行
             </a-button>
+            <a-button size="small" @click="editScript(record)">编辑</a-button>
             <a-popconfirm
               title="确定要删除这个脚本吗？"
               ok-text="确认"
@@ -107,7 +107,7 @@
             </a-tag>
           </div>
           <div v-if="result.startTime" class="result-time">
-            开始时间: {{ result.startTime }} | 结束时间: {{ result.endTime }}
+            开始时间: {{ result.startTime }}
           </div>
           
           <!-- 分命令显示执行结果 -->

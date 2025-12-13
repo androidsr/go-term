@@ -912,11 +912,8 @@ func (sc *SSHController) ExecuteBatchScript(scriptID string) (map[string]models.
 			results[sid] = execution
 			resultMutex.Unlock()
 
-			// 执行命令列表
-			execution.Status = "running"
-
-			// 使用增强的脚本执行器执行命令
-			commandOutputs, execErr := sc.enhancedExecutor.ExecuteCommands(parsedCommands, sc, sid)
+			// 执行命令列表 - 使用同一个会话执行所有命令
+			commandOutputs, execErr := sc.enhancedExecutor.ExecuteCommandsWithSameSession(parsedCommands, sc, sid)
 			execution.EndTime = time.Now().Format("2006-01-02 15:04:05")
 			execution.CommandOutputs = commandOutputs
 
