@@ -16,7 +16,7 @@ func (m *MockCommandExecutor) ExecCommand(serverID, command string) (string, err
 	m.CommandsExecuted = append(m.CommandsExecuted, command)
 	// 模拟一些命令会失败
 	if command == "invalid_command" {
-		return "command not found", &MockError{"Process exited with status 127"}
+		return "command not found", &MockError{"Process exited with status 255"}
 	}
 	return "success", nil
 }
@@ -104,9 +104,9 @@ func TestExecuteCommandsWithErrorHandling(t *testing.T) {
 		t.Errorf("ExecuteCommands should not return error: %v", err)
 	}
 
-	// 应该执行了前两个命令，第三个被跳过
-	if len(outputs) != 3 {
-		t.Errorf("Expected 3 outputs, got %d", len(outputs))
+	// 应该只执行了前两个命令，第三个被跳过不显示
+	if len(outputs) != 2 {
+		t.Errorf("Expected 2 outputs, got %d", len(outputs))
 	}
 
 	// 检查执行状态
@@ -119,12 +119,8 @@ func TestExecuteCommandsWithErrorHandling(t *testing.T) {
 	}
 
 	// 检查详细的错误信息
-	if outputs[1].Error != "Process exited with status 127\n详细输出:\ncommand not found" {
+	if outputs[1].Error != "Process exited with status 255\n详细输出:\ncommand not found" {
 		t.Errorf("Second command should have detailed error, got: %s", outputs[1].Error)
-	}
-
-	if outputs[2].Status != "skipped" {
-		t.Errorf("Third command should be skipped, got status: %s", outputs[2].Status)
 	}
 }
 

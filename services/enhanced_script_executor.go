@@ -73,17 +73,9 @@ func (ese *EnhancedScriptExecutor) ExecuteCommands(
 	shouldStop := false
 
 	for _, parsedCmd := range commands {
-		// 如果前面的命令失败且没有设置继续执行，则跳过后续命令的执行和显示
+		// 如果前面的命令失败且没有设置继续执行，则停止执行后续命令
 		if shouldStop {
-			cmdOutput := models.CommandOutput{
-				Command:   parsedCmd.Command,
-				Status:    "skipped",
-				StartTime: now,
-				EndTime:   now,
-				Error:     "前面的命令执行失败，已跳过此命令",
-			}
-			commandOutputs = append(commandOutputs, cmdOutput)
-			continue
+			break
 		}
 
 		cmdOutput := models.CommandOutput{
