@@ -1,7 +1,7 @@
 <template>
   <div>
     <div class="main-tabs-container">
-      <a-tabs v-model:activeKey="activeKey" size="small" :destroyInactiveTabPane="true" :hideAdd="true"
+      <a-tabs v-model:activeKey="activeKey" size="small" :hideAdd="true"
         type="editable-card" @edit="closeTerminalTab" @change="onTabChange">
         <!-- 主页标签页 - 服务器管理 -->
         <a-tab-pane key="home" tab="主页" :closable="false">

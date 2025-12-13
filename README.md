@@ -1,11 +1,6 @@
 # Go-Term SSH终端管理器
 
 Go-Term是一个基于Wails框架开发的跨平台SSH终端管理工具，使用Go语言作为后端，Vue.js作为前端，提供了现代化的图形界面来管理和连接远程服务器。
-<img width="1356" height="929" alt="image" src="https://github.com/user-attachments/assets/acc4fd41-f7b0-4b6b-919e-af868ea2df14" />
-
-<img width="1364" height="929" alt="image" src="https://github.com/user-attachments/assets/ab58363b-66b9-4c11-aa4a-a1b81dc77c96" />
-
-<img width="1356" height="928" alt="image" src="https://github.com/user-attachments/assets/373a8ef2-5f9a-4a09-ae75-fff8bc831b81" />
 
 ## 功能特性
 
@@ -17,6 +12,9 @@ Go-Term是一个基于Wails框架开发的跨平台SSH终端管理工具，使�
 - **多标签页**：支持同时打开多个终端和文件管理标签页
 - **响应式布局**：自适应窗口大小调整
 - **配置加密**：敏感配置信息加密存储
+- **批量脚本执行**：支持在多台服务器上执行批量脚本
+- **智能脚本控制**：支持错误时停止或继续执行的灵活控制
+- **自动SFTP客户端管理**：文件操作时自动创建SFTP客户端
 
 ## 技术架构
 
@@ -44,6 +42,7 @@ go-term/
 ├── frontend/            # 前端代码
 │   ├── src/
 │   │   ├── components/  # Vue组件
+│   │   │   ├── BatchScriptManager.vue
 │   │   │   ├── FileManager.vue
 │   │   │   ├── ServerManager.vue
 │   │   │   └── Terminal.vue
@@ -52,7 +51,10 @@ go-term/
 ├── models/              # 数据模型
 │   └── server.go
 ├── services/            # 服务层
+│   ├── enhanced_script_executor.go
 │   ├── encrypted_config.go
+│   ├── script_manager.go
+│   ├── script_parser.go
 │   ├── server_manager.go
 │   ├── ssh_service.go
 │   └── terminal_session.go
@@ -93,6 +95,12 @@ go-term/
 - 使用AES-GCM加密算法保护配置文件
 - 使用scrypt密钥派生函数增强安全性
 - 自动处理配置文件的加密和解密
+
+### 7. 批量脚本执行模块
+- 支持在多台服务器上同时执行脚本
+- 智能错误处理和控制
+- 支持文件上传和下载命令
+- 自动创建SFTP客户端
 
 ## 安装与运行
 
@@ -157,6 +165,17 @@ wails build
 - 新标签页中将打开文件管理界面
 - 可以浏览目录、上传下载文件
 
+### 6. 批量脚本执行
+- 在左侧导航栏点击"批量脚本"选项卡
+- 点击"新建脚本"按钮创建脚本
+- 编写脚本内容，支持以下特殊语法：
+  - 普通命令：`ls -la`
+  - 错误时继续执行：`invalid_command $ne` （即使命令失败也会继续执行后续命令）
+  - 文件上传：`$upload C:\local\file.txt /remote/directory/`
+  - 文件下载：`$download /remote/file.txt C:\local\directory\`
+- 选择目标服务器
+- 点击"执行"按钮运行脚本
+
 ## 配置文件
 
 配置文件现在使用加密存储，文件名为`servers.dat`，使用AES-GCM加密算法和scrypt密钥派生函数保护敏感信息。
@@ -167,6 +186,48 @@ sshController.SetEncryptionConfig(true, "your-encryption-password-here")
 ```
 
 注意：在生产环境中，应通过环境变量或安全的用户输入方式获取加密密码，而不是硬编码在代码中。
+
+## 脚本语法说明
+
+### 基本命令执行
+```
+ls -la
+pwd
+whoami
+```
+
+### 错误时继续执行
+在命令末尾添加 `$ne` 标记，即使该命令执行失败也会继续执行后续命令：
+```
+invalid_command $ne
+echo "这条命令仍会执行"
+```
+
+### 文件上传
+使用 `$upload` 命令上传本地文件到远程服务器：
+```
+$upload C:\path\to\local\file.txt /remote/directory/
+```
+
+### 文件下载
+使用 `$download` 命令从远程服务器下载文件到本地：
+```
+$download /remote/file.txt C:\path\to\local\directory\
+```
+
+## 改进和优化
+
+### 错误处理优化
+- 保留详细的错误信息和命令输出
+- 提供清晰的错误描述和调试信息
+
+### 自动SFTP客户端管理
+- 在执行文件上传/下载操作时自动创建SFTP客户端
+- 无需手动创建SFTP客户端即可使用文件操作命令
+
+### 智能命令跳过
+- 当命令失败且没有`$ne`标记时，后续命令将被跳过并不再显示
+- 提高脚本执行效率和结果可读性
 
 ## 开发说明
 

@@ -21,6 +21,7 @@ type SSHController struct {
 	serverManager    *services.ServerManager
 	scriptManager    *services.ScriptManager
 	scriptParser     *services.ScriptParser
+	enhancedExecutor *services.EnhancedScriptExecutor
 	connections      map[string]*services.SSHConnection
 	sftpClients      map[string]*sftp.Client
 	terminalSessions map[string]*services.TerminalSession
@@ -51,6 +52,7 @@ func NewSSHController() *SSHController {
 		needReencrypt:    false,                // 默认不需要重新加密
 		scriptManager:    services.NewScriptManager(),
 		scriptParser:     services.NewScriptParser(),
+		enhancedExecutor: services.NewEnhancedScriptExecutor(),
 	}
 }
 
@@ -871,14 +873,11 @@ func (sc *SSHController) ExecuteBatchScript(scriptID string) (map[string]models.
 		return nil, fmt.Errorf("获取脚本失败: %v", err)
 	}
 
-	// 解析脚本内容为命令列表
-	commands := sc.scriptParser.ParseCommands(script.Content)
-	if len(commands) == 0 {
+	// 使用增强的脚本执行器解析命令
+	parsedCommands := sc.enhancedExecutor.ParseCommandsWithSpecialHandling(script.Content)
+	if len(parsedCommands) == 0 {
 		return nil, fmt.Errorf("脚本中没有有效的命令")
 	}
-
-	// 构建在同一会话中执行的完整脚本
-	combinedScript := sc.scriptParser.BuildCombinedScript(commands)
 
 	// 获取所有服务器组以解析服务器名称
 	groups := sc.serverManager.GetGroups()
@@ -900,12 +899,12 @@ func (sc *SSHController) ExecuteBatchScript(scriptID string) (map[string]models.
 			defer wg.Done()
 
 			execution := models.ScriptExecution{
-				ID:         fmt.Sprintf("exec_%s_%s_%d", scriptID, sid, time.Now().Unix()),
-				ScriptID:   scriptID,
-				ServerID:   sid,
-				ServerName: serverMap[sid],
-				Status:     "pending",
-				StartTime:  time.Now().Format("2006-01-02 15:04:05"),
+				ID:             fmt.Sprintf("exec_%s_%s_%d", scriptID, sid, time.Now().Unix()),
+				ScriptID:       scriptID,
+				ServerID:       sid,
+				ServerName:     serverMap[sid],
+				Status:         "pending",
+				StartTime:      time.Now().Format("2006-01-02 15:04:05"),
 				CommandOutputs: make([]models.CommandOutput, 0),
 			}
 
@@ -913,73 +912,37 @@ func (sc *SSHController) ExecuteBatchScript(scriptID string) (map[string]models.
 			results[sid] = execution
 			resultMutex.Unlock()
 
-			// 执行完整脚本（所有命令在同一会话中）
+			// 执行命令列表
 			execution.Status = "running"
-			
-			// 使用ExecuteCommand执行完整脚本
-			output, err := sc.ExecuteCommand(sid, combinedScript)
-			execution.EndTime = time.Now().Format("2006-01-02 15:04:05")
 
-			// 解析输出以提取每个命令的结果（无论是否有执行错误）
-			if output != "" {
-				execution.CommandOutputs = sc.parseCombinedOutputWithFallback(output, commands, err)
-				
-				// 检查是否有失败的命令
-				hasFailedCommand := false
-				for _, cmdOutput := range execution.CommandOutputs {
+			// 使用增强的脚本执行器执行命令
+			commandOutputs, execErr := sc.enhancedExecutor.ExecuteCommands(parsedCommands, sc, sid)
+			execution.EndTime = time.Now().Format("2006-01-02 15:04:05")
+			execution.CommandOutputs = commandOutputs
+
+			// 检查是否有失败的命令
+			hasFailedCommand := false
+			for _, cmdOutput := range commandOutputs {
+				if cmdOutput.Status == "failed" {
+					hasFailedCommand = true
+					break
+				}
+			}
+
+			// 根据执行结果设置状态
+			if execErr != nil {
+				execution.Status = "failed"
+				execution.Error = fmt.Sprintf("执行错误: %v", execErr)
+			} else if hasFailedCommand {
+				execution.Status = "failed"
+				for i, cmdOutput := range commandOutputs {
 					if cmdOutput.Status == "failed" {
-						hasFailedCommand = true
+						execution.Error = fmt.Sprintf("第%d行命令失败: %s", i+1, cmdOutput.Command)
 						break
 					}
 				}
-				
-				// 根据解析结果设置执行状态
-				if err != nil {
-					execution.Status = "failed"
-					// 如果有具体的命令失败信息，使用命令失败信息；否则使用执行错误信息
-					if hasFailedCommand {
-						for i, cmdOutput := range execution.CommandOutputs {
-							if cmdOutput.Status == "failed" {
-								execution.Error = fmt.Sprintf("第%d行命令失败: %s", i+1, cmdOutput.Command)
-								break
-							}
-						}
-					} else {
-						execution.Error = fmt.Sprintf("执行错误: %v", err)
-					}
-					execution.Output = output
-				} else if hasFailedCommand {
-					execution.Status = "failed"
-					for i, cmdOutput := range execution.CommandOutputs {
-						if cmdOutput.Status == "failed" {
-							execution.Error = fmt.Sprintf("第%d行命令失败: %s", i+1, cmdOutput.Command)
-							break
-						}
-					}
-				} else {
-					execution.Status = "success"
-				}
-				
-				// 在总输出中标记失败位置
-				for i, cmdOutput := range execution.CommandOutputs {
-					if cmdOutput.Status == "failed" {
-						// 在总输出中添加失败位置标记
-						failureMarker := fmt.Sprintf("\n\n=== 执行失败 ===\n第%d行命令: %s\n错误: %s\n", 
-							i+1, cmdOutput.Command, cmdOutput.Error)
-						execution.Output += failureMarker
-						break // 只标记第一个失败的命令
-					}
-				}
 			} else {
-				// 没有输出，可能是执行错误
-				if err != nil {
-					execution.Status = "failed"
-					execution.Error = fmt.Sprintf("执行错误: %v", err)
-					execution.Output = ""
-				} else {
-					execution.Status = "success"
-					execution.Output = ""
-				}
+				execution.Status = "success"
 			}
 
 			resultMutex.Lock()
@@ -992,139 +955,31 @@ func (sc *SSHController) ExecuteBatchScript(scriptID string) (map[string]models.
 	return results, nil
 }
 
-// parseCombinedOutput 解析组合脚本的输出，分离每个命令的结果
-func (sc *SSHController) parseCombinedOutput(output string, commands []string) []models.CommandOutput {
-	var commandOutputs []models.CommandOutput
-	lines := strings.Split(output, "\n")
-	
-	var currentCommand *models.CommandOutput
-	var currentOutput strings.Builder
-	commandIndex := 0
-	
-	for _, line := range lines {
-		// 检查是否是命令开始标记
-		if strings.HasPrefix(line, "[COMMAND ") && strings.Contains(line, "]") {
-			// 保存前一个命令的结果
-			if currentCommand != nil {
-				currentCommand.Output = strings.TrimSpace(currentOutput.String())
-				commandOutputs = append(commandOutputs, *currentCommand)
-			}
-			
-			// 开始新命令
-			if commandIndex < len(commands) {
-				cmdText := strings.TrimPrefix(line, "[COMMAND ")
-				cmdText = strings.TrimSuffix(cmdText, "]")
-				currentCommand = &models.CommandOutput{
-					Command: commands[commandIndex],
-					Status:  "success", // 默认成功，后面可能根据退出码调整
-				}
-				commandIndex++
-				currentOutput.Reset()
-			}
-		} else if strings.HasPrefix(line, "[COMMAND_EXIT_CODE:") {
-			// 解析退出码
-			if currentCommand != nil {
-				exitCodeStr := strings.TrimPrefix(line, "[COMMAND_EXIT_CODE:")
-				exitCodeStr = strings.TrimSuffix(exitCodeStr, "]")
-				if exitCodeStr != "0" {
-					currentCommand.Status = "failed"
-					// 清楚显示失败的具体命令行
-					currentCommand.Error = fmt.Sprintf("命令执行失败 (第%d行): %s (退出码: %s)", 
-						commandIndex, currentCommand.Command, exitCodeStr)
-				}
-			}
-		} else if strings.HasPrefix(line, "[COMMAND_SEPARATOR]") {
-			// 命令分隔符，继续下一个命令
-			continue
-		} else if currentCommand != nil {
-			// 普通输出行
-			currentOutput.WriteString(line + "\n")
-		}
-	}
-	
-	// 保存最后一个命令的结果
-	if currentCommand != nil {
-		currentCommand.Output = strings.TrimSpace(currentOutput.String())
-		commandOutputs = append(commandOutputs, *currentCommand)
-	}
-	
-	return commandOutputs
+// 实现CommandExecutor接口的方法（添加Exec前缀以避免命名冲突）
+func (sc *SSHController) ExecCommand(serverID, command string) (string, error) {
+	return sc.ExecuteCommand(serverID, command)
 }
 
-// parseCombinedOutputWithFallback 带备用方案的输出解析
-func (sc *SSHController) parseCombinedOutputWithFallback(output string, commands []string, execError error) []models.CommandOutput {
-	// 先尝试正常解析
-	commandOutputs := sc.parseCombinedOutput(output, commands)
-	
-	// 如果解析失败（没有解析到任何命令），使用备用方案
-	if len(commandOutputs) == 0 && len(commands) > 0 {
-		commandOutputs = sc.createFallbackCommandOutputs(commands, output, execError)
-	}
-	
-	return commandOutputs
+func (sc *SSHController) ExecUploadFile(serverID, localPath, remotePath string) (string, error) {
+	return sc.UploadFile(serverID, localPath, remotePath)
 }
 
-// createFallbackCommandOutputs 在解析失败时创建备用命令输出
-func (sc *SSHController) createFallbackCommandOutputs(commands []string, rawOutput string, execError error) []models.CommandOutput {
-	var commandOutputs []models.CommandOutput
-	now := time.Now().Format("2006-01-02 15:04:05")
-	
-	// 检查原始输出中是否有错误信息来定位失败的命令
-	outputLower := strings.ToLower(rawOutput)
-	failedIndex := -1
-	
-	// 尝试从输出中找到第一个失败的命令
-	for i, command := range commands {
-		commandLower := strings.ToLower(command)
-		if strings.Contains(outputLower, "command not found") && 
-		   strings.Contains(outputLower, strings.Fields(commandLower)[0]) {
-			failedIndex = i
-			break
-		}
-		if strings.Contains(outputLower, "no such file") && 
-		   strings.Contains(outputLower, strings.Fields(commandLower)[len(strings.Fields(commandLower))-1]) {
-			failedIndex = i
-			break
-		}
+func (sc *SSHController) ExecDownloadFile(serverID, remotePath, localPath string) (string, error) {
+	return sc.DownloadFile(serverID, remotePath, localPath)
+}
+
+// EnsureSFTPClient 确保SFTP客户端已创建
+func (sc *SSHController) EnsureSFTPClient(serverID string) error {
+	// 检查SFTP客户端是否已存在
+	sc.mutex.RLock()
+	_, sftpExists := sc.sftpClients[serverID]
+	sc.mutex.RUnlock()
+
+	if sftpExists {
+		return nil
 	}
-	
-	// 如果没有找到明确的失败位置，但执行有错误，假设第一个命令失败
-	if failedIndex == -1 && execError != nil {
-		failedIndex = 0
-	}
-	
-	// 根据原始输出和错误信息判断可能的失败位置
-	for i, command := range commands {
-		status := "success"
-		cmdOutput := models.CommandOutput{
-			Command:   command,
-			Status:    status,
-			StartTime: now,
-			EndTime:    now,
-		}
-		
-		if i == failedIndex {
-			cmdOutput.Status = "failed"
-			if execError != nil {
-				cmdOutput.Error = fmt.Sprintf("第%d行命令执行失败: %s (错误: %s)", 
-					i+1, command, execError.Error())
-			} else {
-				cmdOutput.Error = fmt.Sprintf("第%d行命令执行失败: %s", 
-					i+1, command)
-			}
-			cmdOutput.Output = rawOutput
-		} else if execError != nil && failedIndex != -1 && i > failedIndex {
-			// 如果前面的命令失败了，后面的命令可能没有执行
-			cmdOutput.Status = "unknown"
-			cmdOutput.Error = fmt.Sprintf("第%d行命令可能未执行（前面的命令失败）", i+1)
-		} else if failedIndex == -1 {
-			// 如果没有明确失败但解析失败
-			cmdOutput.Status = "unknown"
-			cmdOutput.Error = "无法解析此命令的输出"
-		}
-		
-		commandOutputs = append(commandOutputs, cmdOutput)
-	}
-	
-	return commandOutputs
+
+	// 创建SFTP客户端
+	_, err := sc.CreateSFTPClient(serverID)
+	return err
 }

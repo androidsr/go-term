@@ -36,6 +36,14 @@ export function DisconnectFromServer(arg1:string):Promise<string>;
 
 export function DownloadFile(arg1:string,arg2:string,arg3:string):Promise<string>;
 
+export function EnsureSFTPClient(arg1:string):Promise<void>;
+
+export function ExecCommand(arg1:string,arg2:string):Promise<string>;
+
+export function ExecDownloadFile(arg1:string,arg2:string,arg3:string):Promise<string>;
+
+export function ExecUploadFile(arg1:string,arg2:string,arg3:string):Promise<string>;
+
 export function ExecuteBatchScript(arg1:string):Promise<Record<string, models.ScriptExecution>>;
 
 export function ExecuteCommand(arg1:string,arg2:string):Promise<string>;

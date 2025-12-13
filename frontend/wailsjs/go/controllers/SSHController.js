@@ -66,6 +66,22 @@ export function DownloadFile(arg1, arg2, arg3) {
   return window['go']['controllers']['SSHController']['DownloadFile'](arg1, arg2, arg3);
 }
 
+export function EnsureSFTPClient(arg1) {
+  return window['go']['controllers']['SSHController']['EnsureSFTPClient'](arg1);
+}
+
+export function ExecCommand(arg1, arg2) {
+  return window['go']['controllers']['SSHController']['ExecCommand'](arg1, arg2);
+}
+
+export function ExecDownloadFile(arg1, arg2, arg3) {
+  return window['go']['controllers']['SSHController']['ExecDownloadFile'](arg1, arg2, arg3);
+}
+
+export function ExecUploadFile(arg1, arg2, arg3) {
+  return window['go']['controllers']['SSHController']['ExecUploadFile'](arg1, arg2, arg3);
+}
+
 export function ExecuteBatchScript(arg1) {
   return window['go']['controllers']['SSHController']['ExecuteBatchScript'](arg1);
 }
