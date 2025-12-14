@@ -944,22 +944,43 @@ func (sc *SSHController) ExecuteBatchScript(scriptID string) (map[string]models.
 				// 显示第一个失败的命令的错误信息
 				for _, cmdOutput := range commandOutputs {
 					if cmdOutput.Status == "failed" {
-						if script.ExecutionType == "script" {
-							execution.Error = cmdOutput.Error // 直接使用命令输出中的错误信息
+						// 优先使用命令级别的错误信息
+						if cmdOutput.Error != "" {
+							execution.Error = cmdOutput.Error
+						} else if cmdOutput.Output != "" {
+							execution.Error = cmdOutput.Output
 						} else {
-							// 命令模式需要找到行号
-							for i, searchCmd := range commandOutputs {
-								if searchCmd.Command == cmdOutput.Command {
-									execution.Error = fmt.Sprintf("第%d行命令失败: %s", i+1, cmdOutput.Command)
-									break
-								}
-							}
+							execution.Error = "命令执行失败，但没有详细的错误信息"
 						}
 						break
 					}
 				}
+				// 如果没有找到具体的错误信息，设置默认错误
+				if execution.Error == "" {
+					execution.Error = "脚本执行过程中发生了未知的错误"
+				}
 			} else {
 				execution.Status = "success"
+			}
+
+			// 最终检查：确保失败状态一定有错误信息
+			if execution.Status == "failed" && execution.Error == "" {
+				execution.Error = "执行失败，但未能获取具体的错误信息"
+			}
+
+			// 确保命令输出也被正确设置
+			if execution.Status == "failed" && len(commandOutputs) > 0 {
+				// 检查最后一个命令是否失败
+				lastCmd := commandOutputs[len(commandOutputs)-1]
+				if lastCmd.Status == "failed" {
+					// 确保主执行对象也有错误输出
+					if execution.Output == "" && lastCmd.Output != "" {
+						execution.Output = lastCmd.Output
+					}
+					if execution.Error == "" && lastCmd.Error != "" {
+						execution.Error = lastCmd.Error
+					}
+				}
 			}
 
 			resultMutex.Lock()

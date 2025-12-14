@@ -78,7 +78,8 @@ func (s *SSHConnection) ExecuteCommand(command string) (string, error) {
 
 	output, err := session.CombinedOutput(command)
 	if err != nil {
-		return "", fmt.Errorf("执行命令失败: %v", err)
+		// 返回错误信息时同时返回输出内容，以便前端能看到错误详情
+		return string(output), fmt.Errorf("执行命令失败: %v", err)
 	}
 
 	return string(output), nil

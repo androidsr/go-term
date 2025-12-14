@@ -64,10 +64,10 @@ func (ese *EnhancedScriptExecutor) ExecuteScriptMode(
 
 	// 在脚本模式中，需要预处理文件操作命令
 	processedScript, fileOperations := ese.preprocessScriptForFileOperations(scriptContent)
-	
-	// 如果有文件操作命令，切换到命令模式处理
+
+	// 如果有文件操作命令，使用命令模式执行所有命令（保持原始顺序）
 	if len(fileOperations) > 0 {
-		// 使用命令模式执行，这样能更好地处理文件操作
+		// 使用命令模式执行，这样可以按原始顺序执行所有命令
 		return ese.ExecuteCommandMode(fileOperations, executor, serverID)
 	}
 
@@ -94,7 +94,7 @@ func (ese *EnhancedScriptExecutor) ExecuteScriptMode(
 				errorMsg = strings.TrimSpace(parts[2])
 			}
 		}
-		
+
 		// 尝试从错误信息中提取行号
 		lineInfo := ese.extractLineInfoFromError(errorMsg, scriptContent)
 		if lineInfo != "" {
@@ -102,10 +102,13 @@ func (ese *EnhancedScriptExecutor) ExecuteScriptMode(
 		} else {
 			cmdOutput.Error = fmt.Sprintf("脚本执行失败: %s", errorMsg)
 		}
-		
-		// 如果有输出内容，添加到错误信息中
-		if output != "" && output != errorMsg {
-			cmdOutput.Error += fmt.Sprintf("\n详细输出:\n%s", output)
+
+		// 确保输出字段包含错误信息，这样前端能显示
+		if output == "" {
+			cmdOutput.Output = cmdOutput.Error
+		} else {
+			// 即使有输出，也要确保错误信息被包含
+			cmdOutput.Output = fmt.Sprintf("%s\n错误信息: %s", output, cmdOutput.Error)
 		}
 	} else {
 		cmdOutput.Status = "success"
@@ -119,8 +122,6 @@ func (ese *EnhancedScriptExecutor) ExecuteScriptMode(
 	return commandOutputs, nil
 }
 
-
-
 // extractLineInfoFromError 从错误信息中提取行号信息
 func (ese *EnhancedScriptExecutor) extractLineInfoFromError(errorMsg, scriptContent string) string {
 	// 常见的错误行号模式匹配
@@ -132,7 +133,7 @@ func (ese *EnhancedScriptExecutor) extractLineInfoFromError(errorMsg, scriptCont
 		`syntax error at line (\d+)`,
 		`error on line (\d+)`,
 	}
-	
+
 	for _, pattern := range patterns {
 		re := regexp.MustCompile(pattern)
 		matches := re.FindStringSubmatch(errorMsg)
@@ -140,7 +141,7 @@ func (ese *EnhancedScriptExecutor) extractLineInfoFromError(errorMsg, scriptCont
 			return matches[1]
 		}
 	}
-	
+
 	// 如果错误信息中没有明确的行号，尝试通过上下文推断
 	lines := strings.Split(scriptContent, "\n")
 	for i, line := range lines {
@@ -157,7 +158,7 @@ func (ese *EnhancedScriptExecutor) extractLineInfoFromError(errorMsg, scriptCont
 			}
 		}
 	}
-	
+
 	return ""
 }
 
@@ -167,10 +168,10 @@ func (ese *EnhancedScriptExecutor) preprocessScriptForFileOperations(scriptConte
 	commands := ese.scriptParser.ParseCommands(scriptContent)
 	var fileOperations []ParsedCommand
 	var hasFileOperations bool
-	
+
 	// 分类命令并按原始顺序创建混合命令列表
 	var mixedCommands []ParsedCommand
-	
+
 	for _, cmd := range commands {
 		trimmedCmd := strings.TrimSpace(cmd)
 		parsedCmd := ParsedCommand{}
@@ -194,13 +195,26 @@ func (ese *EnhancedScriptExecutor) preprocessScriptForFileOperations(scriptConte
 			mixedCommands = append(mixedCommands, parsedCmd)
 		}
 	}
-	
+
 	// 如果没有文件操作，返回原脚本和空列表
 	if !hasFileOperations {
 		return scriptContent, []ParsedCommand{}
 	}
-	
-	return "", mixedCommands
+
+	// 构建不包含文件操作的脚本内容用于shell执行
+	var shellCommands []string
+	for _, cmd := range mixedCommands {
+		if cmd.CommandType == "shell" {
+			shellCommands = append(shellCommands, cmd.Command)
+		}
+	}
+
+	var shellScript string
+	if len(shellCommands) > 0 {
+		shellScript = strings.Join(shellCommands, "\n")
+	}
+
+	return shellScript, mixedCommands
 }
 
 // handleUploadCommand 处理文件上传命令
@@ -324,16 +338,20 @@ func (ese *EnhancedScriptExecutor) ExecuteCommandMode(
 				cmdOutput.Error = fmt.Sprintf("第%d行命令失败: %s", i+1, errorMsg)
 			}
 
-			if output != "" && output != errorMsg {
-				cmdOutput.Error += fmt.Sprintf("\n详细输出:\n%s", output)
+			// 确保输出字段包含错误信息，这样前端能显示
+			if output == "" {
+				cmdOutput.Output = cmdOutput.Error
+			} else {
+				cmdOutput.Output += "\n错误信息: " + cmdOutput.Error
 			}
+			// 添加命令到结果列表，确保失败状态被记录
+			commandOutputs = append(commandOutputs, cmdOutput)
 			// 命令模式下，遇到失败命令就停止执行
 			break
 		} else {
 			cmdOutput.Status = "success"
+			commandOutputs = append(commandOutputs, cmdOutput)
 		}
-
-		commandOutputs = append(commandOutputs, cmdOutput)
 	}
 
 	return commandOutputs, nil

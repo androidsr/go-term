@@ -127,6 +127,12 @@
             开始时间: {{ result.startTime }}
           </div>
           
+ <!-- 如果有整体错误信息，优先显示 -->
+          <div v-if="result.error" class="result-error">
+            <strong>执行错误:</strong>
+            <pre>{{ result.error }}</pre>
+          </div>
+          
           <!-- 分命令显示执行结果 -->
           <div v-if="result.commandOutputs && result.commandOutputs.length > 0" class="command-results">
             <div class="command-results-header">
@@ -140,21 +146,21 @@
                 <code class="command-text">{{ cmdResult.command }}</code>
                 <span class="command-time">{{ cmdResult.startTime }} - {{ cmdResult.endTime }}</span>
               </div>
-              <div v-if="cmdResult.output || cmdResult.status === 'success'" class="command-output">
+              
+              <div v-if="cmdResult.output" class="command-output">
                 <strong>输出:</strong>
-                <pre>{{ cmdResult.output || '执行完成' }}</pre>
+                <pre>{{ cmdResult.output }}</pre>
               </div>
               <div v-if="cmdResult.error" class="command-error">
                 <strong>错误:</strong>
                 <pre>{{ cmdResult.error }}</pre>
               </div>
+              <!-- 如果命令失败但没有独立的错误信息，则在输出中显示错误 -->
+              <div v-else-if="cmdResult.status === 'failed' && cmdResult.output" class="command-error">
+                <strong>错误:</strong>
+                <pre>{{ cmdResult.output }}</pre>
+              </div>
             </div>
-          </div>
-          
-          <!-- 如果没有命令输出但有整体错误信息，显示整体错误 -->
-          <div v-else-if="result.error" class="result-error">
-            <strong>执行错误:</strong>
-            <pre>{{ result.error }}</pre>
           </div>
           <!-- 兼容旧的输出格式 -->
           <div v-else-if="result.output" class="result-output">
@@ -365,6 +371,7 @@ export default {
       this.executingScriptId = script.id;
       try {
         const results = await ExecuteBatchScript(script.id);
+        console.log('执行结果详情:', JSON.stringify(results, null, 2));
         this.executionResults = Object.values(results);
         this.executionResultVisible = true;
         this.$message.success('脚本执行完成');
