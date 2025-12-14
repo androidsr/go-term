@@ -12,6 +12,8 @@ export function AddServerGroup(arg1:models.ServerGroup):Promise<void>;
 
 export function ClearTerminalOutputBuffer(arg1:string):Promise<void>;
 
+export function CloseAllConnections():Promise<void>;
+
 export function CloseTerminalSession(arg1:string):Promise<string>;
 
 export function ConnectToServer(arg1:string):Promise<string>;

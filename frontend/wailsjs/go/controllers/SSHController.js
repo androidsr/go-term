@@ -18,6 +18,10 @@ export function ClearTerminalOutputBuffer(arg1) {
   return window['go']['controllers']['SSHController']['ClearTerminalOutputBuffer'](arg1);
 }
 
+export function CloseAllConnections() {
+  return window['go']['controllers']['SSHController']['CloseAllConnections']();
+}
+
 export function CloseTerminalSession(arg1) {
   return window['go']['controllers']['SSHController']['CloseTerminalSession'](arg1);
 }

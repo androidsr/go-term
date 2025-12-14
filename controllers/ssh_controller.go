@@ -370,6 +370,57 @@ func (sc *SSHController) DisconnectFromServer(serverID string) (string, error) {
 	return "服务器连接已断开", nil
 }
 
+// CloseAllConnections 关闭所有连接
+func (sc *SSHController) CloseAllConnections() {
+	// 获取所有服务器ID
+	sc.mutex.RLock()
+	var serverIDs []string
+	for serverID := range sc.connections {
+		serverIDs = append(serverIDs, serverID)
+	}
+	for serverID := range sc.terminalSessions {
+		// 避免重复添加
+		found := false
+		for _, id := range serverIDs {
+			if id == serverID {
+				found = true
+				break
+			}
+		}
+		if !found {
+			serverIDs = append(serverIDs, serverID)
+		}
+	}
+	for serverID := range sc.sftpClients {
+		// 避免重复添加
+		found := false
+		for _, id := range serverIDs {
+			if id == serverID {
+				found = true
+				break
+			}
+		}
+		if !found {
+			serverIDs = append(serverIDs, serverID)
+		}
+	}
+	sc.mutex.RUnlock()
+
+	// 逐一关闭所有连接
+	for _, serverID := range serverIDs {
+		log.Printf("正在关闭服务器 %s 的所有连接", serverID)
+		// 使用现有的DisconnectFromServer方法关闭连接
+		_, err := sc.DisconnectFromServer(serverID)
+		if err != nil {
+			log.Printf("关闭服务器 %s 的连接时出错: %v", serverID, err)
+		} else {
+			log.Printf("服务器 %s 的所有连接已关闭", serverID)
+		}
+	}
+
+	log.Println("所有服务器连接已关闭")
+}
+
 // IsTerminalSessionActive 检查终端会话是否仍然活跃
 func (sc *SSHController) IsTerminalSessionActive(serverID string) bool {
 	sc.mutex.RLock()

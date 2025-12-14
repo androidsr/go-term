@@ -36,6 +36,10 @@ func main() {
 			app.startup(ctx)
 			sshController.Startup(ctx)
 		},
+		OnShutdown: func(ctx context.Context) {
+			// 关闭所有SSH连接
+			sshController.CloseAllConnections()
+		},
 		Bind: []interface{}{
 			app,
 			sshController,
