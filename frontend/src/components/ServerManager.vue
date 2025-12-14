@@ -142,7 +142,8 @@ import {
   UpdateServer,
   UpdateServerGroup,
   HandleFileUploadRequest,
-  HandleFileDownloadRequest
+  HandleFileDownloadRequest,
+  SendScriptToTerminal // 添加导入
 } from '../../wailsjs/go/controllers/SSHController';
 import Terminal from './Terminal.vue';
 import FileManager from './FileManager.vue';
@@ -684,7 +685,7 @@ export default {
         await new Promise(resolve => setTimeout(resolve, 500));
       }
       
-      this.$message.success('脚本命令已发送到终端');
+      this.$message.success('脚本命令处理完成');
     }
   }
 };
