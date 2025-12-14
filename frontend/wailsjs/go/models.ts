@@ -25,6 +25,7 @@ export namespace models {
 	    description: string;
 	    content: string;
 	    serverIds: string[];
+	    executionType: string;
 	    createdAt: string;
 	    updatedAt: string;
 	
@@ -39,6 +40,7 @@ export namespace models {
 	        this.description = source["description"];
 	        this.content = source["content"];
 	        this.serverIds = source["serverIds"];
+	        this.executionType = source["executionType"];
 	        this.createdAt = source["createdAt"];
 	        this.updatedAt = source["updatedAt"];
 	    }

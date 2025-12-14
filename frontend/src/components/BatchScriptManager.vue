@@ -2,7 +2,7 @@
   <div class="batch-script-manager">
     <div class="script-header">
       <a-button type="primary" @click="showAddScriptModal">
-        <plus-outlined /> 新建脚本
+        <PlusOutlined /> 新建脚本
       </a-button>
       <a-input-search
         v-model:value="searchKeyword"
@@ -23,6 +23,11 @@
           <a-tooltip :title="record.content">
             <span class="content-preview">{{ getContentPreview(record.content) }}</span>
           </a-tooltip>
+        </template>
+        <template v-else-if="column.dataIndex === 'executionType'">
+          <a-tag :color="record.executionType === 'script' ? 'green' : 'blue'" size="small">
+            {{ getExecutionTypeText(record.executionType) }}
+          </a-tag>
         </template>
         <template v-else-if="column.dataIndex === 'serverIds'">
           <a-tag v-for="serverId in record.serverIds" :key="serverId" color="blue" size="small">
@@ -50,7 +55,7 @@
 
     <!-- 添加/编辑脚本模态框 -->
     <a-modal
-      v-model:open="scriptModalVisible"
+      :open="scriptModalVisible"
       :title="editingScript ? '编辑脚本' : '新建脚本'"
       width="800px"
       @ok="handleScriptModalOk"
@@ -77,15 +82,27 @@
             <small>支持多选，可按住 Ctrl 键进行多选</small>
           </div>
         </a-form-item>
+        <a-form-item label="执行类型" required>
+          <a-radio-group v-model:value="scriptForm.executionType" button-style="solid">
+            <a-radio-button value="command">命令模式</a-radio-button>
+            <a-radio-button value="script">脚本模式</a-radio-button>
+          </a-radio-group>
+          <div class="execution-type-help">
+            <small>
+              <strong>命令模式：</strong>逐条执行每条命令，遇到失败命令时停止执行<br>
+              <strong>脚本模式：</strong>将整个内容作为完整脚本执行，保持脚本上下文
+            </small>
+          </div>
+        </a-form-item>
         <a-form-item label="脚本内容" required>
           <a-textarea
             v-model:value="scriptForm.content"
-            placeholder="请输入要执行的Shell命令或脚本内容"
+            :placeholder="getContentPlaceholder(scriptForm.executionType)"
             :rows="10"
             style="font-family: 'Courier New', monospace;"
           />
           <div class="script-help">
-            <small>提示：输入Shell命令，多个命令可以用换行分隔</small>
+            <small v-html="getContentHelp(scriptForm.executionType)"></small>
           </div>
         </a-form-item>
       </a-form>
@@ -123,9 +140,9 @@
                 <code class="command-text">{{ cmdResult.command }}</code>
                 <span class="command-time">{{ cmdResult.startTime }} - {{ cmdResult.endTime }}</span>
               </div>
-              <div v-if="cmdResult.output" class="command-output">
+              <div v-if="cmdResult.output || cmdResult.status === 'success'" class="command-output">
                 <strong>输出:</strong>
-                <pre>{{ cmdResult.output }}</pre>
+                <pre>{{ cmdResult.output || '执行完成' }}</pre>
               </div>
               <div v-if="cmdResult.error" class="command-error">
                 <strong>错误:</strong>
@@ -134,14 +151,15 @@
             </div>
           </div>
           
+          <!-- 如果没有命令输出但有整体错误信息，显示整体错误 -->
+          <div v-else-if="result.error" class="result-error">
+            <strong>执行错误:</strong>
+            <pre>{{ result.error }}</pre>
+          </div>
           <!-- 兼容旧的输出格式 -->
           <div v-else-if="result.output" class="result-output">
             <strong>输出:</strong>
             <pre>{{ result.output }}</pre>
-          </div>
-          <div v-else-if="result.error" class="result-error">
-            <strong>错误:</strong>
-            <pre>{{ result.error }}</pre>
           </div>
         </div>
       </div>
@@ -181,10 +199,12 @@ export default {
         name: '',
         description: '',
         content: '',
+        executionType: 'command', // 默认为命令模式
         serverIds: []
       },
       scriptColumns: [
         { title: '脚本名称', dataIndex: 'name', key: 'name' },
+        { title: '执行类型', dataIndex: 'executionType', key: 'executionType' },
         { title: '目标服务器', dataIndex: 'serverIds', key: 'serverIds' },
         { title: '创建时间', dataIndex: 'createdAt', key: 'createdAt' },
         { title: '操作', dataIndex: 'action', key: 'action' }
@@ -263,6 +283,7 @@ export default {
         name: '',
         description: '',
         content: '',
+        executionType: 'command', // 默认为命令模式
         serverIds: []
       };
       this.selectedServerIds = [];
@@ -276,6 +297,7 @@ export default {
         name: script.name,
         description: script.description,
         content: script.content,
+        executionType: script.executionType || 'command', // 兼容旧数据
         serverIds: [...serverIds]
       };
       this.selectedServerIds = [...serverIds];
@@ -307,6 +329,7 @@ export default {
           name: this.scriptForm.name,
           description: this.scriptForm.description,
           content: this.scriptForm.content,
+          executionType: this.scriptForm.executionType,
           serverIds: [...serverIds],
           createdAt: this.editingScript ? this.editingScript.createdAt : '',
           updatedAt: ''
@@ -370,6 +393,30 @@ export default {
         case 'running': return '执行中';
         case 'pending': return '等待中';
         default: return '未知';
+      }
+    },
+
+    getContentPlaceholder(executionType) {
+      if (executionType === 'script') {
+        return '请输入完整的Shell脚本内容\n示例：\n#!/bin/bash\necho "开始执行脚本"\nfor i in {1..5}\ndo\n  echo "循环 $i"\ndone\n\n# 文件操作会自动处理\n$upload ./config.json /etc/myapp/\n$download /var/log/app.log ./logs/\necho "文件操作完成"';
+      } else {
+        return '请输入要执行的Shell命令\n示例：\necho "Hello World"\nls -la\npwd\n\n# 文件操作示例\n$upload ./dist.tar.gz /tmp/\n$download /var/backup/db.sql ./backup/';
+      }
+    },
+
+    getContentHelp(executionType) {
+      if (executionType === 'script') {
+        return '<strong>脚本模式：</strong>整个脚本将作为Shell脚本执行，支持文件操作。当脚本包含文件操作时会自动切换到混合执行模式。<br><strong>文件操作：</strong>支持 $upload 本地路径 远程路径 和 $download 远程路径 本地路径';
+      } else {
+        return '<strong>命令模式：</strong>每行命令将单独执行，遇到失败命令时停止后续执行。适合执行独立的命令序列。<br><strong>文件操作：</strong>支持 $upload 本地路径 远程路径 和 $download 远程路径 本地路径';
+      }
+    },
+
+    getExecutionTypeText(executionType) {
+      switch (executionType) {
+        case 'script': return '脚本模式';
+        case 'command': return '命令模式';
+        default: return '命令模式'; // 兼容旧数据
       }
     }
   }
@@ -524,5 +571,11 @@ export default {
   background: #fff5f5;
   color: #d73a49;
   border-left-color: #cb2431;
+}
+
+.execution-type-help {
+  margin-top: 8px;
+  color: #666;
+  line-height: 1.4;
 }
 </style>

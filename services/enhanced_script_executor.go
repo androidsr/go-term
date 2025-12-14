@@ -2,6 +2,7 @@ package services
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 
@@ -20,32 +21,25 @@ func NewEnhancedScriptExecutor() *EnhancedScriptExecutor {
 	}
 }
 
-// ParseCommandsWithSpecialHandling 解析命令并处理特殊功能
-func (ese *EnhancedScriptExecutor) ParseCommandsWithSpecialHandling(scriptContent string) []ParsedCommand {
+// ParseCommands 解析普通命令（支持文件操作指令）
+func (ese *EnhancedScriptExecutor) ParseCommands(scriptContent string) []ParsedCommand {
 	rawCommands := ese.scriptParser.ParseCommands(scriptContent)
 	var parsedCommands []ParsedCommand
 
 	for _, cmd := range rawCommands {
-		parsedCmd := ParsedCommand{
-			Command:         cmd,
-			ContinueOnError: strings.HasSuffix(strings.TrimSpace(cmd), "$ne"),
-		}
-
-		// 如果是特殊命令，去除标记后缀
-		if parsedCmd.ContinueOnError {
-			// 去除 $ne 后缀
-			parsedCmd.Command = strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(cmd), "$ne"))
-		}
+		trimmedCmd := strings.TrimSpace(cmd)
+		parsedCmd := ParsedCommand{}
 
 		// 检查是否是文件上传命令
-		if strings.HasPrefix(parsedCmd.Command, "$upload ") {
+		if strings.HasPrefix(trimmedCmd, "$upload ") {
 			parsedCmd.CommandType = "upload"
-			parsedCmd.Command = strings.TrimSpace(strings.TrimPrefix(parsedCmd.Command, "$upload"))
-		} else if strings.HasPrefix(parsedCmd.Command, "$download ") {
+			parsedCmd.Command = strings.TrimSpace(strings.TrimPrefix(trimmedCmd, "$upload"))
+		} else if strings.HasPrefix(trimmedCmd, "$download ") {
 			parsedCmd.CommandType = "download"
-			parsedCmd.Command = strings.TrimSpace(strings.TrimPrefix(parsedCmd.Command, "$download"))
+			parsedCmd.Command = strings.TrimSpace(strings.TrimPrefix(trimmedCmd, "$download"))
 		} else {
 			parsedCmd.CommandType = "shell"
+			parsedCmd.Command = cmd
 		}
 
 		parsedCommands = append(parsedCommands, parsedCmd)
@@ -56,396 +50,157 @@ func (ese *EnhancedScriptExecutor) ParseCommandsWithSpecialHandling(scriptConten
 
 // ParsedCommand 解析后的命令
 type ParsedCommand struct {
-	Command         string // 命令内容
-	CommandType     string // 命令类型: shell, upload, download
-	ContinueOnError bool   // 是否在错误时继续执行
+	Command     string // 命令内容
+	CommandType string // 命令类型: shell, upload, download
 }
 
-// ExecuteCommands 执行命令列表
-func (ese *EnhancedScriptExecutor) ExecuteCommands(
-	commands []ParsedCommand,
+// ExecuteScriptMode 脚本模式执行 - 将整个脚本内容作为一个整体执行
+func (ese *EnhancedScriptExecutor) ExecuteScriptMode(
+	scriptContent string,
 	executor CommandExecutor,
 	serverID string,
 ) ([]models.CommandOutput, error) {
+	now := time.Now().Format("2006-01-02 15:04:05")
+
+	// 在脚本模式中，需要预处理文件操作命令
+	processedScript, fileOperations := ese.preprocessScriptForFileOperations(scriptContent)
+	
+	// 如果有文件操作命令，切换到命令模式处理
+	if len(fileOperations) > 0 {
+		// 使用命令模式执行，这样能更好地处理文件操作
+		return ese.ExecuteCommandMode(fileOperations, executor, serverID)
+	}
+
+	// 没有文件操作时，正常执行脚本
 	var commandOutputs []models.CommandOutput
-	now := time.Now().Format("2006-01-02 15:04:05")
-
-	shouldStop := false
-
-	for _, parsedCmd := range commands {
-		// 如果前面的命令失败且没有设置继续执行，则停止执行后续命令
-		if shouldStop {
-			// 即使停止执行，也要添加一个跳过的记录
-			cmdOutput := models.CommandOutput{
-				Command:   parsedCmd.Command,
-				Status:    "skipped",
-				StartTime: now,
-				EndTime:   time.Now().Format("2006-01-02 15:04:05"),
-			}
-			commandOutputs = append(commandOutputs, cmdOutput)
-			continue
-		}
-
-		cmdOutput := models.CommandOutput{
-			Command:   parsedCmd.Command,
-			Status:    "running",
-			StartTime: now,
-		}
-
-		var err error
-		var output string
-
-		switch parsedCmd.CommandType {
-		case "upload":
-			output, err = ese.handleUploadCommand(executor, serverID, parsedCmd.Command)
-		case "download":
-			output, err = ese.handleDownloadCommand(executor, serverID, parsedCmd.Command)
-		default:
-			// 执行普通shell命令
-			output, err = executor.ExecCommand(serverID, parsedCmd.Command)
-		}
-
-		cmdOutput.EndTime = time.Now().Format("2006-01-02 15:04:05")
-		cmdOutput.Output = output
-
-		if err != nil {
-			cmdOutput.Status = "failed"
-			cmdOutput.Error = err.Error()
-
-			// 保存详细的错误信息
-			if output != "" {
-				cmdOutput.Error = fmt.Sprintf("%s\n详细输出:\n%s", err.Error(), output)
-			}
-
-			// 如果命令没有设置继续执行标记，则停止后续命令执行
-			if !parsedCmd.ContinueOnError {
-				shouldStop = true
-			}
-		} else {
-			cmdOutput.Status = "success"
-		}
-
-		commandOutputs = append(commandOutputs, cmdOutput)
+	cmdOutput := models.CommandOutput{
+		Command:   "[完整脚本执行]",
+		Status:    "running",
+		StartTime: now,
 	}
 
-	return commandOutputs, nil
-}
-
-// ExecuteCommandsWithSameSession 在同一个会话中执行命令列表
-// 这个方法确保所有shell命令在同一个SSH会话中执行，以保持上下文连贯性
-func (ese *EnhancedScriptExecutor) ExecuteCommandsWithSameSession(
-	commands []ParsedCommand,
-	executor CommandExecutor,
-	serverID string,
-) ([]models.CommandOutput, error) {
-	var commandOutputs []models.CommandOutput
-	now := time.Now().Format("2006-01-02 15:04:05")
-
-	shouldStop := false
-
-	// 收集所有shell命令并构建组合脚本
-	var shellCommands []ParsedCommand
-	for _, cmd := range commands {
-		if cmd.CommandType == "shell" {
-			shellCommands = append(shellCommands, cmd)
-		}
-	}
-
-	// 如果有shell命令，在同一个会话中执行它们
-	var shellResults []models.CommandOutput
-	if len(shellCommands) > 0 {
-		// 构建组合脚本
-		combinedScript := ese.scriptParser.BuildCombinedScript(shellCommands)
-
-		// 执行组合脚本
-		output, err := executor.ExecCommand(serverID, combinedScript)
-
-		// 解析组合脚本的输出
-		shellResults = parseCombinedScriptOutput(output, err, shellCommands)
-	}
-
-	// 处理所有命令，包括shell命令的结果和特殊命令
-	shellIndex := 0
-	for _, parsedCmd := range commands {
-		// 如果前面的命令失败且没有设置继续执行，则停止执行后续命令
-		if shouldStop {
-			// 即使停止执行，也要添加一个跳过的记录
-			cmdOutput := models.CommandOutput{
-				Command:   parsedCmd.Command,
-				Status:    "skipped",
-				StartTime: now,
-				EndTime:   time.Now().Format("2006-01-02 15:04:05"),
-			}
-			commandOutputs = append(commandOutputs, cmdOutput)
-			continue
-		}
-
-		cmdOutput := models.CommandOutput{
-			Command:   parsedCmd.Command,
-			Status:    "running",
-			StartTime: now,
-		}
-
-		var err error
-		var output string
-
-		switch parsedCmd.CommandType {
-		case "upload":
-			output, err = ese.handleUploadCommand(executor, serverID, parsedCmd.Command)
-			cmdOutput.EndTime = time.Now().Format("2006-01-02 15:04:05")
-			cmdOutput.Output = output
-
-			if err != nil {
-				cmdOutput.Status = "failed"
-				cmdOutput.Error = err.Error()
-				if output != "" {
-					cmdOutput.Error = fmt.Sprintf("%s\n详细输出:\n%s", err.Error(), output)
-				}
-				if !parsedCmd.ContinueOnError {
-					shouldStop = true
-				}
-			} else {
-				cmdOutput.Status = "success"
-			}
-		case "download":
-			output, err = ese.handleDownloadCommand(executor, serverID, parsedCmd.Command)
-			cmdOutput.EndTime = time.Now().Format("2006-01-02 15:04:05")
-			cmdOutput.Output = output
-
-			if err != nil {
-				cmdOutput.Status = "failed"
-				cmdOutput.Error = err.Error()
-				if output != "" {
-					cmdOutput.Error = fmt.Sprintf("%s\n详细输出:\n%s", err.Error(), output)
-				}
-				if !parsedCmd.ContinueOnError {
-					shouldStop = true
-				}
-			} else {
-				cmdOutput.Status = "success"
-			}
-		default:
-			// 使用在同一个会话中执行的结果
-			if shellIndex < len(shellResults) {
-				cmdOutput = shellResults[shellIndex]
-				// 检查是否应该停止后续命令的执行
-				if cmdOutput.Status == "failed" && !parsedCmd.ContinueOnError {
-					shouldStop = true
-				}
-				shellIndex++
-			} else {
-				// fallback到单独执行命令
-				output, err = executor.ExecCommand(serverID, parsedCmd.Command)
-				cmdOutput.EndTime = time.Now().Format("2006-01-02 15:04:05")
-				cmdOutput.Output = output
-
-				if err != nil {
-					cmdOutput.Status = "failed"
-					cmdOutput.Error = err.Error()
-					if output != "" {
-						cmdOutput.Error = fmt.Sprintf("%s\n详细输出:\n%s", err.Error(), output)
-					}
-					if !parsedCmd.ContinueOnError {
-						shouldStop = true
-					}
-				} else {
-					cmdOutput.Status = "success"
-				}
-			}
-		}
-
-		commandOutputs = append(commandOutputs, cmdOutput)
-	}
-
-	return commandOutputs, nil
-}
-
-// parseCombinedScriptOutput 解析组合脚本的输出
-func parseCombinedScriptOutput(output string, err error, commands []ParsedCommand) []models.CommandOutput {
-	var results []models.CommandOutput
-	now := time.Now().Format("2006-01-02 15:04:05")
-	endTime := time.Now().Format("2006-01-02 15:04:05")
+	// 执行处理后的脚本内容
+	output, err := executor.ExecCommand(serverID, processedScript)
+	cmdOutput.EndTime = time.Now().Format("2006-01-02 15:04:05")
+	cmdOutput.Output = output
 
 	if err != nil {
-		// 检查是否是因为命令失败而停止执行
-		if strings.Contains(output, "[COMMAND_STOPPED_DUE_TO_FAILURE]") {
-			// 解析输出以确定哪个命令失败
-			lines := strings.Split(output, "\n")
-			failedCommandIndex := -1
-
-			for i, line := range lines {
-				if strings.Contains(line, "[COMMAND_EXIT_CODE:") && !strings.Contains(line, "[COMMAND_EXIT_CODE:0]") {
-					// 找到非零退出码
-					failedCommandIndex = i
-					break
-				}
+		cmdOutput.Status = "failed"
+		// 清理错误信息，避免重复包装
+		errorMsg := err.Error()
+		if strings.Contains(errorMsg, "执行命令失败:") {
+			parts := strings.SplitN(errorMsg, ":", 3)
+			if len(parts) >= 3 {
+				errorMsg = strings.TrimSpace(parts[2])
 			}
-
-			// 为所有命令创建结果记录
-			for i, cmd := range commands {
-				result := models.CommandOutput{
-					Command:   cmd.Command,
-					StartTime: now,
-					EndTime:   endTime,
-				}
-
-				if i < failedCommandIndex {
-					// 失败命令之前的命令应该是成功的
-					result.Status = "success"
-					result.Output = ""
-				} else if i == failedCommandIndex {
-					// 失败的命令
-					result.Status = "failed"
-					result.Error = fmt.Errorf("命令执行失败").Error()
-					result.Output = output
-				} else {
-					// 失败命令之后的命令应该是被跳过的
-					result.Status = "skipped"
-				}
-
-				results = append(results, result)
-			}
-			return results
+		}
+		
+		// 尝试从错误信息中提取行号
+		lineInfo := ese.extractLineInfoFromError(errorMsg, scriptContent)
+		if lineInfo != "" {
+			cmdOutput.Error = fmt.Sprintf("脚本执行失败 (第%s行): %s", lineInfo, errorMsg)
 		} else {
-			// 其他错误情况
-			for _, cmd := range commands {
-				result := models.CommandOutput{
-					Command:   cmd.Command,
-					Status:    "failed",
-					StartTime: now,
-					EndTime:   endTime,
-					Output:    output,
-					Error:     err.Error(),
-				}
-				if output != "" {
-					result.Error = fmt.Sprintf("%s\n详细输出:\n%s", err.Error(), output)
-				}
-				results = append(results, result)
-			}
-			return results
+			cmdOutput.Error = fmt.Sprintf("脚本执行失败: %s", errorMsg)
 		}
-	}
-
-	if output == "" {
-		// 如果没有输出，为所有命令创建成功记录（假设成功）
-		for _, cmd := range commands {
-			result := models.CommandOutput{
-				Command:   cmd.Command,
-				Status:    "success",
-				StartTime: now,
-				EndTime:   endTime,
-				Output:    "",
-			}
-			results = append(results, result)
-		}
-		return results
-	}
-
-	// 解析组合脚本的输出
-	lines := strings.Split(output, "\n")
-
-	currentResult := models.CommandOutput{}
-	var outputLines []string
-	commandIndex := 0
-	stoppedDueToFailure := false
-
-	for _, line := range lines {
-		if strings.Contains(line, "[COMMAND_STOPPED_DUE_TO_FAILURE]") {
-			stoppedDueToFailure = true
-			// 保存当前命令结果
-			if currentResult.Command != "" {
-				currentResult.Output = strings.Join(outputLines, "\n")
-				// 如果没有设置状态，默认为成功
-				if currentResult.Status == "" {
-					currentResult.Status = "success"
-				}
-				results = append(results, currentResult)
-				commandIndex++
-			}
-			break
-		} else if strings.HasPrefix(line, "[COMMAND ") {
-			// 如果已经有当前结果，保存它
-			if currentResult.Command != "" {
-				currentResult.Output = strings.Join(outputLines, "\n")
-				// 如果没有设置状态，默认为成功
-				if currentResult.Status == "" {
-					currentResult.Status = "success"
-				}
-				results = append(results, currentResult)
-
-				// 准备下一个结果
-				commandIndex++
-				currentResult = models.CommandOutput{}
-				outputLines = []string{}
-			}
-
-			// 提取命令信息
-			endIndex := strings.Index(line, "]")
-			if endIndex > 0 && commandIndex < len(commands) {
-				currentResult.Command = commands[commandIndex].Command
-				currentResult.StartTime = now
-				currentResult.EndTime = endTime
-			}
-		} else if strings.HasPrefix(line, "[COMMAND_EXIT_CODE:") {
-			// 提取退出码
-			codeStr := strings.TrimPrefix(line, "[COMMAND_EXIT_CODE:")
-			codeStr = strings.TrimSuffix(codeStr, "]")
-			if codeStr == "0" {
-				currentResult.Status = "success"
-			} else {
-				currentResult.Status = "failed"
-				currentResult.Error = fmt.Errorf("命令执行失败，退出码: %s", codeStr).Error()
-			}
-		} else if line == "[COMMAND_SEPARATOR]" {
-			// 命令分隔符，不做处理
-		} else {
-			// 输出内容
-			if currentResult.Command != "" {
-				outputLines = append(outputLines, line)
-			}
-		}
-	}
-
-	// 保存最后一个命令的结果
-	if currentResult.Command != "" && !stoppedDueToFailure {
-		currentResult.Output = strings.Join(outputLines, "\n")
-		// 如果没有设置状态，默认为成功
-		if currentResult.Status == "" {
-			currentResult.Status = "success"
-		}
-		results = append(results, currentResult)
-		commandIndex++
-	}
-
-	// 如果脚本因失败而停止，后续命令标记为跳过
-	if stoppedDueToFailure {
-		for commandIndex < len(commands) {
-			result := models.CommandOutput{
-				Command:   commands[commandIndex].Command,
-				Status:    "skipped",
-				StartTime: now,
-				EndTime:   endTime,
-				Output:    "",
-			}
-			results = append(results, result)
-			commandIndex++
+		
+		// 如果有输出内容，添加到错误信息中
+		if output != "" && output != errorMsg {
+			cmdOutput.Error += fmt.Sprintf("\n详细输出:\n%s", output)
 		}
 	} else {
-		// 如果还有剩余的命令没有结果，为它们创建默认的成功记录
-		for commandIndex < len(commands) {
-			result := models.CommandOutput{
-				Command:   commands[commandIndex].Command,
-				Status:    "success",
-				StartTime: now,
-				EndTime:   endTime,
-				Output:    "",
-			}
-			results = append(results, result)
-			commandIndex++
+		cmdOutput.Status = "success"
+		// 确保即使成功也有输出内容显示
+		if output == "" {
+			cmdOutput.Output = "脚本执行完成，无输出内容"
 		}
 	}
 
-	return results
+	commandOutputs = append(commandOutputs, cmdOutput)
+	return commandOutputs, nil
+}
+
+
+
+// extractLineInfoFromError 从错误信息中提取行号信息
+func (ese *EnhancedScriptExecutor) extractLineInfoFromError(errorMsg, scriptContent string) string {
+	// 常见的错误行号模式匹配
+	patterns := []string{
+		`line (\d+)`,
+		`行 (\d+)`,
+		`at line (\d+)`,
+		`第(\d+)行`,
+		`syntax error at line (\d+)`,
+		`error on line (\d+)`,
+	}
+	
+	for _, pattern := range patterns {
+		re := regexp.MustCompile(pattern)
+		matches := re.FindStringSubmatch(errorMsg)
+		if len(matches) >= 2 {
+			return matches[1]
+		}
+	}
+	
+	// 如果错误信息中没有明确的行号，尝试通过上下文推断
+	lines := strings.Split(scriptContent, "\n")
+	for i, line := range lines {
+		trimmedLine := strings.TrimSpace(line)
+		if trimmedLine != "" && !strings.HasPrefix(trimmedLine, "#") {
+			// 提取命令的第一个词
+			fields := strings.Fields(trimmedLine)
+			if len(fields) > 0 {
+				firstWord := fields[0]
+				// 检查错误信息中是否包含该命令关键字
+				if strings.Contains(errorMsg, firstWord) {
+					return fmt.Sprintf("%d", i+1)
+				}
+			}
+		}
+	}
+	
+	return ""
+}
+
+// preprocessScriptForFileOperations 预处理脚本，提取文件操作命令
+func (ese *EnhancedScriptExecutor) preprocessScriptForFileOperations(scriptContent string) (string, []ParsedCommand) {
+	// 解析所有命令
+	commands := ese.scriptParser.ParseCommands(scriptContent)
+	var fileOperations []ParsedCommand
+	var hasFileOperations bool
+	
+	// 分类命令并按原始顺序创建混合命令列表
+	var mixedCommands []ParsedCommand
+	
+	for _, cmd := range commands {
+		trimmedCmd := strings.TrimSpace(cmd)
+		parsedCmd := ParsedCommand{}
+
+		if strings.HasPrefix(trimmedCmd, "$upload ") {
+			parsedCmd.CommandType = "upload"
+			parsedCmd.Command = strings.TrimSpace(strings.TrimPrefix(trimmedCmd, "$upload"))
+			fileOperations = append(fileOperations, parsedCmd)
+			mixedCommands = append(mixedCommands, parsedCmd)
+			hasFileOperations = true
+		} else if strings.HasPrefix(trimmedCmd, "$download ") {
+			parsedCmd.CommandType = "download"
+			parsedCmd.Command = strings.TrimSpace(strings.TrimPrefix(trimmedCmd, "$download"))
+			fileOperations = append(fileOperations, parsedCmd)
+			mixedCommands = append(mixedCommands, parsedCmd)
+			hasFileOperations = true
+		} else {
+			// 普通shell命令
+			parsedCmd.CommandType = "shell"
+			parsedCmd.Command = cmd
+			mixedCommands = append(mixedCommands, parsedCmd)
+		}
+	}
+	
+	// 如果没有文件操作，返回原脚本和空列表
+	if !hasFileOperations {
+		return scriptContent, []ParsedCommand{}
+	}
+	
+	return "", mixedCommands
 }
 
 // handleUploadCommand 处理文件上传命令
@@ -481,12 +236,12 @@ func (ese *EnhancedScriptExecutor) handleUploadCommand(executor CommandExecutor,
 	}
 
 	// 执行上传操作
-	result, err := executor.ExecUploadFile(serverID, localPath, remotePath)
+	_, err = executor.ExecUploadFile(serverID, localPath, remotePath)
 	if err != nil {
 		return "", fmt.Errorf("文件上传失败: %v", err)
 	}
 
-	return result, nil
+	return fmt.Sprintf("文件上传成功: %s -> %s", localPath, remotePath), nil
 }
 
 // handleDownloadCommand 处理文件下载命令
@@ -507,12 +262,90 @@ func (ese *EnhancedScriptExecutor) handleDownloadCommand(executor CommandExecuto
 	}
 
 	// 执行下载操作
-	result, err := executor.ExecDownloadFile(serverID, remotePath, localPath)
+	_, err = executor.ExecDownloadFile(serverID, remotePath, localPath)
 	if err != nil {
 		return "", fmt.Errorf("文件下载失败: %v", err)
 	}
 
-	return result, nil
+	return fmt.Sprintf("文件下载成功: %s -> %s", remotePath, localPath), nil
+}
+
+// ExecuteCommandMode 命令模式执行 - 逐条执行每个命令
+func (ese *EnhancedScriptExecutor) ExecuteCommandMode(
+	commands []ParsedCommand,
+	executor CommandExecutor,
+	serverID string,
+) ([]models.CommandOutput, error) {
+	var commandOutputs []models.CommandOutput
+	now := time.Now().Format("2006-01-02 15:04:05")
+
+	for i, parsedCmd := range commands {
+		cmdOutput := models.CommandOutput{
+			Command:   parsedCmd.Command,
+			Status:    "running",
+			StartTime: now,
+		}
+
+		var err error
+		var output string
+
+		// 根据命令类型执行不同的操作
+		switch parsedCmd.CommandType {
+		case "upload":
+			output, err = ese.handleUploadCommand(executor, serverID, parsedCmd.Command)
+		case "download":
+			output, err = ese.handleDownloadCommand(executor, serverID, parsedCmd.Command)
+		default:
+			// 执行普通shell命令
+			output, err = executor.ExecCommand(serverID, parsedCmd.Command)
+		}
+
+		cmdOutput.EndTime = time.Now().Format("2006-01-02 15:04:05")
+		cmdOutput.Output = output
+
+		if err != nil {
+			cmdOutput.Status = "failed"
+			// 清理错误信息，避免重复包装
+			errorMsg := err.Error()
+			if strings.Contains(errorMsg, "执行命令失败:") {
+				parts := strings.SplitN(errorMsg, ":", 3)
+				if len(parts) >= 3 {
+					errorMsg = strings.TrimSpace(parts[2])
+				}
+			}
+
+			// 根据命令类型设置不同的错误信息
+			switch parsedCmd.CommandType {
+			case "upload":
+				cmdOutput.Error = fmt.Sprintf("第%d行文件上传失败: %s", i+1, errorMsg)
+			case "download":
+				cmdOutput.Error = fmt.Sprintf("第%d行文件下载失败: %s", i+1, errorMsg)
+			default:
+				cmdOutput.Error = fmt.Sprintf("第%d行命令失败: %s", i+1, errorMsg)
+			}
+
+			if output != "" && output != errorMsg {
+				cmdOutput.Error += fmt.Sprintf("\n详细输出:\n%s", output)
+			}
+			// 命令模式下，遇到失败命令就停止执行
+			break
+		} else {
+			cmdOutput.Status = "success"
+		}
+
+		commandOutputs = append(commandOutputs, cmdOutput)
+	}
+
+	return commandOutputs, nil
+}
+
+// ExecuteCommands 执行命令列表（保持向后兼容，使用命令模式）
+func (ese *EnhancedScriptExecutor) ExecuteCommands(
+	commands []ParsedCommand,
+	executor CommandExecutor,
+	serverID string,
+) ([]models.CommandOutput, error) {
+	return ese.ExecuteCommandMode(commands, executor, serverID)
 }
 
 // CommandExecutor 命令执行接口

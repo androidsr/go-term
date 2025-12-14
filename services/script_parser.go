@@ -2,7 +2,6 @@ package services
 
 import (
 	"bufio"
-	"fmt"
 	"strings"
 )
 
@@ -64,48 +63,7 @@ func (sp *ScriptParser) ParseCommands(scriptContent string) []string {
 	return commands
 }
 
-// BuildCombinedScript 将多个命令组合为在同一会话中执行的脚本
-func (sp *ScriptParser) BuildCombinedScript(commands []ParsedCommand) string {
-	if len(commands) == 0 {
-		return ""
-	}
 
-	// 构建一个完整的shell脚本，确保所有命令在同一会话中执行
-	var script strings.Builder
-	script.WriteString("#!/bin/bash\n")
-	// 不使用 set -e，这样即使某个命令失败，后续命令也会继续执行，便于我们记录所有结果
-	// script.WriteString("set -e  # 遇到错误时退出\n")
-	script.WriteString("\n")
-
-	for i, command := range commands {
-		// 为每个命令添加标识，便于输出解析
-		script.WriteString(fmt.Sprintf("echo \"[COMMAND %d] %s\"\n", i+1, command.Command))
-
-		// 如果命令没有设置继续执行标记，则在失败时退出脚本
-		if !command.ContinueOnError {
-			// 执行命令并检查退出码
-			script.WriteString(command.Command)
-			script.WriteString("\n")
-			script.WriteString("EXIT_CODE=$?\n")
-			script.WriteString("echo \"[COMMAND_EXIT_CODE:$EXIT_CODE]\"\n") // 记录退出码
-			script.WriteString("if [ $EXIT_CODE -ne 0 ]; then\n")
-			script.WriteString("  echo \"[COMMAND_STOPPED_DUE_TO_FAILURE]\"\n")
-			script.WriteString("  exit $EXIT_CODE\n")
-			script.WriteString("fi\n")
-		} else {
-			// 对于带有$ne标记的命令，即使失败也继续执行
-			script.WriteString(command.Command)
-			script.WriteString("\n")
-			script.WriteString("EXIT_CODE=$?\n")
-			script.WriteString("echo \"[COMMAND_EXIT_CODE:$EXIT_CODE]\"\n") // 记录退出码
-		}
-
-		script.WriteString("echo \"[COMMAND_SEPARATOR]\"\n") // 命令分隔符
-		script.WriteString("\n")
-	}
-
-	return script.String()
-}
 
 // IsValidCommand 检查是否是有效命令（不是注释或空行）
 func (sp *ScriptParser) IsValidCommand(line string) bool {

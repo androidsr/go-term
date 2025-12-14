@@ -873,12 +873,6 @@ func (sc *SSHController) ExecuteBatchScript(scriptID string) (map[string]models.
 		return nil, fmt.Errorf("获取脚本失败: %v", err)
 	}
 
-	// 使用增强的脚本执行器解析命令
-	parsedCommands := sc.enhancedExecutor.ParseCommandsWithSpecialHandling(script.Content)
-	if len(parsedCommands) == 0 {
-		return nil, fmt.Errorf("脚本中没有有效的命令")
-	}
-
 	// 获取所有服务器组以解析服务器名称
 	groups := sc.serverManager.GetGroups()
 	serverMap := make(map[string]string)
@@ -912,8 +906,23 @@ func (sc *SSHController) ExecuteBatchScript(scriptID string) (map[string]models.
 			results[sid] = execution
 			resultMutex.Unlock()
 
-			// 执行命令列表 - 使用同一个会话执行所有命令
-			commandOutputs, execErr := sc.enhancedExecutor.ExecuteCommandsWithSameSession(parsedCommands, sc, sid)
+			var commandOutputs []models.CommandOutput
+			var execErr error
+
+			// 根据执行类型选择执行方式
+			if script.ExecutionType == "script" {
+				// 脚本模式：将整个脚本内容作为一个整体执行
+				commandOutputs, execErr = sc.enhancedExecutor.ExecuteScriptMode(script.Content, sc, sid)
+			} else {
+				// 命令模式：逐条执行每个命令（默认模式）
+				parsedCommands := sc.enhancedExecutor.ParseCommands(script.Content)
+				if len(parsedCommands) == 0 {
+					execErr = fmt.Errorf("脚本中没有有效的命令")
+				} else {
+					commandOutputs, execErr = sc.enhancedExecutor.ExecuteCommandMode(parsedCommands, sc, sid)
+				}
+			}
+
 			execution.EndTime = time.Now().Format("2006-01-02 15:04:05")
 			execution.CommandOutputs = commandOutputs
 
@@ -932,9 +941,20 @@ func (sc *SSHController) ExecuteBatchScript(scriptID string) (map[string]models.
 				execution.Error = fmt.Sprintf("执行错误: %v", execErr)
 			} else if hasFailedCommand {
 				execution.Status = "failed"
-				for i, cmdOutput := range commandOutputs {
+				// 显示第一个失败的命令的错误信息
+				for _, cmdOutput := range commandOutputs {
 					if cmdOutput.Status == "failed" {
-						execution.Error = fmt.Sprintf("第%d行命令失败: %s", i+1, cmdOutput.Command)
+						if script.ExecutionType == "script" {
+							execution.Error = cmdOutput.Error // 直接使用命令输出中的错误信息
+						} else {
+							// 命令模式需要找到行号
+							for i, searchCmd := range commandOutputs {
+								if searchCmd.Command == cmdOutput.Command {
+									execution.Error = fmt.Sprintf("第%d行命令失败: %s", i+1, cmdOutput.Command)
+									break
+								}
+							}
+						}
 						break
 					}
 				}

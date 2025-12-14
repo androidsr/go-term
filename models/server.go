@@ -27,6 +27,7 @@ type BatchScript struct {
 	Description string   `json:"description"` // 脚本描述
 	Content     string   `json:"content"`     // 脚本内容
 	ServerIDs   []string `json:"serverIds"`   // 目标服务器ID列表
+	ExecutionType string `json:"executionType"` // 执行类型: "script"(脚本模式), "command"(命令模式)
 	CreatedAt   string   `json:"createdAt"`   // 创建时间
 	UpdatedAt   string   `json:"updatedAt"`   // 更新时间
 }
