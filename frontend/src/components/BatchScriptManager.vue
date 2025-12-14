@@ -4,20 +4,12 @@
       <a-button type="primary" @click="showAddScriptModal">
         <PlusOutlined /> 新建脚本
       </a-button>
-      <a-input-search
-        v-model:value="searchKeyword"
-        placeholder="搜索脚本"
-        style="width: 200px; margin-left: 16px"
-        @search="onSearch"
-      />
+      <a-input-search v-model:value="searchKeyword" placeholder="搜索脚本" style="width: 200px; margin-left: 16px"
+        @search="onSearch" />
     </div>
 
-    <a-table
-      :dataSource="filteredScripts"
-      :columns="scriptColumns"
-      :pagination="{ pageSize: 10 }"
-      rowKey="id"
-    >
+    <a-table :dataSource="filteredScripts" :columns="scriptColumns" :pagination="{ pageSize: 10 }" rowKey="id"
+      size="small">
       <template #bodyCell="{ column, record }">
         <template v-if="column.dataIndex === 'content'">
           <a-tooltip :title="record.content">
@@ -36,24 +28,13 @@
         </template>
         <template v-else-if="column.dataIndex === 'action'">
           <a-space>
-              <a-button size="small" type="primary" @click="executeScript(record)" :loading="executingScriptId === record.id">
+            <a-button size="small" type="primary"
+              @click="record.executionType === 'script' ? executeScript(record) : executeScriptInTerminal(record)"
+              :loading="executingScriptId === record.id">
               执行
             </a-button>
-            <!-- 添加终端执行按钮，仅对命令模式脚本可用 -->
-            <a-button 
-              v-if="record.executionType === 'command'" 
-              size="small" 
-              @click="executeScriptInTerminal(record)"
-            >
-              终端执行
-            </a-button>
             <a-button size="small" @click="editScript(record)">编辑</a-button>
-            <a-popconfirm
-              title="确定要删除这个脚本吗？"
-              ok-text="确认"
-              cancel-text="取消"
-              @confirm="deleteScript(record)"
-            >
+            <a-popconfirm title="确定要删除这个脚本吗？" ok-text="确认" cancel-text="取消" @confirm="deleteScript(record)">
               <a-button size="small" danger>删除</a-button>
             </a-popconfirm>
           </a-space>
@@ -62,26 +43,15 @@
     </a-table>
 
     <!-- 添加/编辑脚本模态框 -->
-    <a-modal
-      :open="scriptModalVisible"
-      :title="editingScript ? '编辑脚本' : '新建脚本'"
-      width="800px"
-      @ok="handleScriptModalOk"
-      @cancel="scriptModalVisible = false"
-    >
+    <a-modal :open="scriptModalVisible" :title="editingScript ? '编辑脚本' : '新建脚本'" width="800px" @ok="handleScriptModalOk"
+      @cancel="scriptModalVisible = false">
       <a-form :model="scriptForm" layout="vertical">
         <a-form-item label="脚本名称" required>
           <a-input v-model:value="scriptForm.name" placeholder="请输入脚本名称" />
         </a-form-item>
         <a-form-item label="目标服务器" required>
-          <a-select
-            v-model:value="selectedServerIds"
-            mode="multiple"
-            placeholder="请选择目标服务器"
-            :options="serverOptions"
-            :field-names="{ label: 'label', value: 'value', options: 'options' }"
-            style="width: 100%"
-          >
+          <a-select v-model:value="selectedServerIds" mode="multiple" placeholder="请选择目标服务器" :options="serverOptions"
+            :field-names="{ label: 'label', value: 'value', options: 'options' }" style="width: 100%">
             <template #suffixIcon>
               <select-outlined />
             </template>
@@ -103,12 +73,8 @@
           </div>
         </a-form-item>
         <a-form-item label="脚本内容" required>
-          <a-textarea
-            v-model:value="scriptForm.content"
-            :placeholder="getContentPlaceholder(scriptForm.executionType)"
-            :rows="10"
-            style="font-family: 'Courier New', monospace;"
-          />
+          <a-textarea v-model:value="scriptForm.content" :placeholder="getContentPlaceholder(scriptForm.executionType)"
+            :rows="10" style="font-family: 'Courier New', monospace;" />
           <div class="script-help">
             <small v-html="getContentHelp(scriptForm.executionType)"></small>
           </div>
@@ -117,12 +83,7 @@
     </a-modal>
 
     <!-- 执行结果模态框 -->
-    <a-modal
-      v-model:open="executionResultVisible"
-      title="执行结果"
-      width="1200px"
-      :footer="null"
-    >
+    <a-modal v-model:open="executionResultVisible" title="执行结果" width="1200px" :footer="null">
       <div class="execution-results">
         <div v-for="result in executionResults" :key="result.serverId" class="result-item">
           <div class="result-header">
@@ -134,13 +95,13 @@
           <div v-if="result.startTime" class="result-time">
             开始时间: {{ result.startTime }}
           </div>
-          
- <!-- 如果有整体错误信息，优先显示 -->
+
+          <!-- 如果有整体错误信息，优先显示 -->
           <div v-if="result.error" class="result-error">
             <strong>执行错误:</strong>
             <pre>{{ result.error }}</pre>
           </div>
-          
+
           <!-- 分命令显示执行结果 -->
           <div v-if="result.commandOutputs && result.commandOutputs.length > 0" class="command-results">
             <div class="command-results-header">
@@ -154,7 +115,7 @@
                 <code class="command-text">{{ cmdResult.command }}</code>
                 <span class="command-time">{{ cmdResult.startTime }} - {{ cmdResult.endTime }}</span>
               </div>
-              
+
               <div v-if="cmdResult.output" class="command-output">
                 <strong>输出:</strong>
                 <pre>{{ cmdResult.output }}</pre>
@@ -218,9 +179,9 @@ export default {
         serverIds: []
       },
       scriptColumns: [
+        { title: '目标服务器', dataIndex: 'serverIds', key: 'serverIds' },
         { title: '脚本名称', dataIndex: 'name', key: 'name' },
         { title: '执行类型', dataIndex: 'executionType', key: 'executionType' },
-        { title: '目标服务器', dataIndex: 'serverIds', key: 'serverIds' },
         { title: '创建时间', dataIndex: 'createdAt', key: 'createdAt' },
         { title: '操作', dataIndex: 'action', key: 'action' }
       ]
@@ -232,7 +193,7 @@ export default {
         return this.scripts;
       }
       const keyword = this.searchKeyword.toLowerCase();
-      return this.scripts.filter(script => 
+      return this.scripts.filter(script =>
         script.name.toLowerCase().includes(keyword) ||
         script.description.toLowerCase().includes(keyword) ||
         script.content.toLowerCase().includes(keyword)
@@ -330,7 +291,7 @@ export default {
         this.$message.warning('请输入脚本内容');
         return;
       }
-      
+
       // 确保 selectedServerIds 是数组
       const serverIds = Array.isArray(this.selectedServerIds) ? this.selectedServerIds : [];
       if (serverIds.length === 0) {
@@ -391,13 +352,13 @@ export default {
         this.executingScriptId = '';
       }
     },
-    
+
     // 终端执行脚本方法
     executeScriptInTerminal(script) {
       // 触发自定义事件，传递脚本信息
       // 让ServerManager来处理终端打开和命令发送
-      const event = new CustomEvent('execute-script-in-terminal', { 
-        detail: { script: script } 
+      const event = new CustomEvent('execute-script-in-terminal', {
+        detail: { script: script }
       });
       window.dispatchEvent(event);
     },

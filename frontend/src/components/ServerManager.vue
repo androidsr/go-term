@@ -62,7 +62,7 @@
         </a-tab-pane>
 
         <!-- 批量脚本标签页 -->
-        <a-tab-pane key="batch-script" tab="批量脚本" :closable="false">
+        <a-tab-pane key="batch-script" tab="预设脚本" :closable="false">
           <BatchScriptManager />
         </a-tab-pane>
 
