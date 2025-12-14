@@ -1,6 +1,12 @@
 # Go-Term SSH终端管理器
 
 Go-Term是一个基于Wails框架开发的跨平台SSH终端管理工具，使用Go语言作为后端，Vue.js作为前端，提供了现代化的图形界面来管理和连接远程服务器。
+<img width="1344" height="918" alt="image" src="https://github.com/user-attachments/assets/8da61bb2-9f66-4d02-b536-838085beb32f" />
+<img width="1353" height="930" alt="image" src="https://github.com/user-attachments/assets/2ed3d058-0358-46e7-ad9e-7b9c07c9a330" />
+<img width="1356" height="930" alt="image" src="https://github.com/user-attachments/assets/fc3dfc26-052f-4192-8519-5ff887268601" />
+<img width="1340" height="924" alt="image" src="https://github.com/user-attachments/assets/dc09f840-4ee7-477a-9115-8254c559bfec" />
+<img width="1351" height="919" alt="image" src="https://github.com/user-attachments/assets/e877fa11-c337-42cc-a638-981a588f4001" />
+<img width="1350" height="911" alt="image" src="https://github.com/user-attachments/assets/1c6000b6-96e4-43f1-931d-721731b0d416" />
 
 ## 功能特性
 
