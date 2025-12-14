@@ -208,11 +208,19 @@ export default {
     await this.loadServerGroups();
     // 添加对自定义事件的监听
     window.addEventListener('execute-script-in-terminal', this.handleExecuteScriptInTerminal);
+    // 添加对文件操作错误的监听
+    window.addEventListener('file-operation-error', this.handleFileOperationError);
+    // 添加对文件操作成功的监听
+    window.addEventListener('file-operation-success', this.handleFileOperationSuccess);
   },
   
   beforeUnmount() {
     // 移除事件监听
     window.removeEventListener('execute-script-in-terminal', this.handleExecuteScriptInTerminal);
+    // 移除文件操作错误监听
+    window.removeEventListener('file-operation-error', this.handleFileOperationError);
+    // 移除文件操作成功监听
+    window.removeEventListener('file-operation-success', this.handleFileOperationSuccess);
   },
 
   methods: {
@@ -576,33 +584,31 @@ export default {
         tab => tab.serverId === server.id && tab.type === 'terminal'
       );
       
+      // 激活已存在的终端标签页或创建新的终端标签页
       if (existingTab) {
-        // 如果已存在终端标签页，激活它并重新发送脚本命令
+        // 如果已存在终端标签页，激活它
         this.activeKey = existingTab.id;
-        
-        // 存储脚本信息，等待终端准备就绪后发送命令
-        this.pendingScript = {
-          script: script,
-          serverId: serverId
-        };
-        
-        // 直接尝试发送脚本到终端（适用于终端已经完全准备好的情况）
-        setTimeout(() => {
-          this.sendScriptToTerminal(script, serverId);
-          this.pendingScript = null;
-        }, 1500);
-        
-        return;
+      } else {
+        // 打开终端窗口
+        this.openTerminal(server);
       }
-      
-      // 打开终端窗口
-      this.openTerminal(server);
       
       // 存储脚本信息，等待终端准备就绪后发送命令
       this.pendingScript = {
         script: script,
         serverId: serverId
       };
+      
+      // 如果是已存在的终端标签页，直接发送脚本命令
+      if (existingTab) {
+        // 延迟一段时间确保终端完全准备好
+        setTimeout(() => {
+          if (this.pendingScript && this.pendingScript.serverId === serverId) {
+            this.sendScriptToTerminal(this.pendingScript.script, serverId);
+            this.pendingScript = null;
+          }
+        }, 1000);
+      }
     },
     
     // 在终端组件挂载后检查是否有待处理的脚本
@@ -618,74 +624,141 @@ export default {
     
     // 发送脚本命令到终端
     async sendScriptToTerminal(script, serverId) {
-      // 解析脚本命令
-      const commands = script.content.split('\n').filter(cmd => cmd.trim() !== '');
-      
-      // 逐行发送命令
-      for (const command of commands) {
-        // 忽略注释和空行
-        if (command.trim() === '' || command.trim().startsWith('#')) {
-          continue;
+      try {
+        // 显示处理中的提示
+        this.$message.loading('正在处理脚本命令...', 0);
+        
+        // 解析脚本命令
+        const commands = script.content.split('\n').filter(cmd => cmd.trim() !== '');
+        
+        if (commands.length === 0) {
+          this.$message.error('脚本中没有有效的命令');
+          return;
         }
         
-        // 检查是否是文件上传命令
-        if (command.trim().startsWith('$upload ')) {
-          // 文件上传命令，调用实际的上传逻辑
-          const uploadParams = command.trim().substring(8).trim().split(/\s+/);
-          if (uploadParams.length >= 2) {
-            const localPath = uploadParams[0];
-            const remotePath = uploadParams[1];
-            
-            try {
-              // 调用后端的文件上传方法
-              await HandleFileUploadRequest(serverId, localPath, remotePath);
-              console.log(`文件上传完成: ${localPath} -> ${remotePath}`);
-            } catch (error) {
-              console.error('文件上传失败:', error);
-            }
-          } else {
-            console.error('上传命令格式错误:', command);
+        // 逐行发送命令
+        for (const command of commands) {
+          // 忽略注释和空行
+          if (command.trim() === '' || command.trim().startsWith('#')) {
+            continue;
           }
-          // 等待文件操作完成后再继续执行后续命令
-          await new Promise(resolve => setTimeout(resolve, 1000));
-          continue;
-        }
-        
-        // 检查是否是文件下载命令
-        if (command.trim().startsWith('$download ')) {
-          // 文件下载命令，调用实际的下载逻辑
-          const downloadParams = command.trim().substring(10).trim().split(/\s+/);
-          if (downloadParams.length >= 2) {
-            const remotePath = downloadParams[0];
-            const localPath = downloadParams[1];
-            
-            try {
-              // 调用后端的文件下载方法
-              await HandleFileDownloadRequest(serverId, remotePath, localPath);
-              console.log(`文件下载完成: ${remotePath} -> ${localPath}`);
-            } catch (error) {
-              console.error('文件下载失败:', error);
+          
+          // 检查是否是文件上传命令
+          if (command.trim().startsWith('$upload ')) {
+            // 文件上传命令，直接调用后端方法处理
+            const uploadParams = command.trim().substring(8).trim().split(/\s+/);
+            if (uploadParams.length >= 2) {
+              const localPath = uploadParams[0];
+              const remoteDir = uploadParams[1];
+              
+              // 构造远程文件路径（与后端逻辑保持一致）
+              let localFileName = localPath;
+              if (localPath.lastIndexOf('/') !== -1) {
+                localFileName = localPath.substring(localPath.lastIndexOf('/') + 1);
+              } else if (localPath.lastIndexOf('\\') !== -1) {
+                localFileName = localPath.substring(localPath.lastIndexOf('\\') + 1);
+              }
+              
+              let remotePath = remoteDir;
+              if (!remoteDir.endsWith('/')) {
+                remotePath += '/';
+              }
+              remotePath += localFileName;
+              
+              try {
+                await HandleFileUploadRequest(serverId, localPath, remotePath);
+                this.$message.success(`文件上传成功: ${localPath} -> ${remotePath}`);
+              } catch (error) {
+                console.error('文件上传失败:', error);
+                this.$message.error(`文件上传失败: ${error.message}`);
+                // 遇到错误时停止执行
+                throw error;
+              }
+            } else {
+              const errorMsg = `上传命令格式错误: ${command}`;
+              console.error(errorMsg);
+              this.$message.error(errorMsg);
+              // 遇到错误时停止执行
+              throw new Error(errorMsg);
             }
-          } else {
-            console.error('下载命令格式错误:', command);
+            // 等待文件操作完成后再继续执行后续命令
+            await new Promise(resolve => setTimeout(resolve, 1000));
+            continue;
           }
-          // 等待文件操作完成后再继续执行后续命令
-          await new Promise(resolve => setTimeout(resolve, 1000));
-          continue;
+          
+          // 检查是否是文件下载命令
+          if (command.trim().startsWith('$download ')) {
+            // 文件下载命令，直接调用后端方法处理
+            const downloadParams = command.trim().substring(10).trim().split(/\s+/);
+            if (downloadParams.length >= 2) {
+              const remotePath = downloadParams[0];
+              const localPath = downloadParams[1];
+              
+              try {
+                await HandleFileDownloadRequest(serverId, remotePath, localPath);
+                this.$message.success(`文件下载成功: ${remotePath} -> ${localPath}`);
+              } catch (error) {
+                console.error('文件下载失败:', error);
+                this.$message.error(`文件下载失败: ${error.message}`);
+                // 遇到错误时停止执行
+                throw error;
+              }
+            } else {
+              const errorMsg = `下载命令格式错误: ${command}`;
+              console.error(errorMsg);
+              this.$message.error(errorMsg);
+              // 遇到错误时停止执行
+              throw new Error(errorMsg);
+            }
+            // 等待文件操作完成后再继续执行后续命令
+            await new Promise(resolve => setTimeout(resolve, 1000));
+            continue;
+          }
+          
+          // 发送普通命令到终端
+          // 通过全局事件总线发送命令
+          const event = new CustomEvent('send-command-to-terminal', { 
+            detail: { serverId: serverId, command: command } 
+          });
+          window.dispatchEvent(event);
+          
+          // 等待一小段时间，模拟用户输入间隔
+          await new Promise(resolve => setTimeout(resolve, 500));
         }
         
-        // 发送普通命令到终端
-        // 通过全局事件总线发送命令
-        const event = new CustomEvent('send-command-to-terminal', { 
-          detail: { serverId: serverId, command: command } 
-        });
-        window.dispatchEvent(event);
-        
-        // 等待一小段时间，模拟用户输入间隔
-        await new Promise(resolve => setTimeout(resolve, 500));
+        // 隐藏加载提示并显示成功消息
+        this.$message.destroy();
+        this.$message.success('脚本命令处理完成');
+      } catch (error) {
+        // 隐藏加载提示并显示错误消息
+        this.$message.destroy();
+        console.error('发送脚本命令失败:', error);
+        this.$message.error(`发送脚本命令失败: ${error.message}`);
       }
-      
-      this.$message.success('脚本命令处理完成');
+    },
+
+    // 处理文件操作成功
+    handleFileOperationSuccess(event) {
+      const { type, localPath, remotePath } = event.detail;
+      let message = '';
+      if (type === 'upload') {
+        message = `文件上传成功: ${localPath} -> ${remotePath}`;
+      } else if (type === 'download') {
+        message = `文件下载成功: ${remotePath} -> ${localPath}`;
+      }
+      this.$message.success(message);
+    },
+    
+    // 处理文件操作错误
+    handleFileOperationError(event) {
+      const { type, localPath, remotePath, error } = event.detail;
+      let message = '';
+      if (type === 'upload') {
+        message = `文件上传失败: ${localPath} -> ${remotePath}, 错误: ${error}`;
+      } else if (type === 'download') {
+        message = `文件下载失败: ${remotePath} -> ${localPath}, 错误: ${error}`;
+      }
+      this.$message.error(message);
     }
   }
 };

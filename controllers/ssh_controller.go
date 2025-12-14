@@ -1056,20 +1056,16 @@ func (sc *SSHController) SendScriptToTerminal(scriptID string, serverID string) 
 				remotePath += localFileName
 
 				// 在终端中显示上传信息
-				_, sendErr := sc.ExecuteCommandWithoutNewline(serverID, fmt.Sprintf("echo \"正在上传文件: %s -> %s\"\n", localPath, remotePath))
-				if sendErr != nil {
-					fmt.Printf("发送信息到终端失败: %v\n", sendErr)
-				}
+				// 注释掉下面的代码，避免在终端中输出上传日志
+				// _, sendErr := sc.ExecuteCommandWithoutNewline(serverID, fmt.Sprintf("echo \"正在上传文件: %s -> %s\"\n", localPath, remotePath))
+				// if sendErr != nil {
+				// 	fmt.Printf("发送信息到终端失败: %v\n", sendErr)
+				// }
 
 				// 确保SFTP客户端已创建
 				err := sc.EnsureSFTPClient(serverID)
 				if err != nil {
 					fmt.Printf("创建SFTP客户端失败: %v\n", err)
-					// 发送错误信息到终端
-					_, sendErr := sc.ExecuteCommandWithoutNewline(serverID, fmt.Sprintf("echo \"创建SFTP客户端失败: %v\"\n", err))
-					if sendErr != nil {
-						fmt.Printf("发送错误信息到终端失败: %v\n", sendErr)
-					}
 					continue
 				}
 
@@ -1077,24 +1073,16 @@ func (sc *SSHController) SendScriptToTerminal(scriptID string, serverID string) 
 				_, err = sc.UploadFile(serverID, localPath, remotePath)
 				if err != nil {
 					fmt.Printf("文件上传失败: %v\n", err)
-					// 发送错误信息到终端
-					_, sendErr := sc.ExecuteCommandWithoutNewline(serverID, fmt.Sprintf("echo \"文件上传失败: %v\"\n", err))
-					if sendErr != nil {
-						fmt.Printf("发送错误信息到终端失败: %v\n", sendErr)
-					}
 				} else {
-					// 发送成功信息到终端
-					_, sendErr := sc.ExecuteCommandWithoutNewline(serverID, fmt.Sprintf("echo \"文件上传成功: %s -> %s\"\n", localPath, remotePath))
-					if sendErr != nil {
-						fmt.Printf("发送成功信息到终端失败: %v\n", sendErr)
-					}
+					fmt.Printf("文件上传成功: %s -> %s\n", localPath, remotePath)
 				}
 			} else {
 				// 发送错误信息到终端
-				_, sendErr := sc.ExecuteCommandWithoutNewline(serverID, fmt.Sprintf("echo \"上传命令格式错误: %s\"\n", parsedCmd.Command))
-				if sendErr != nil {
-					fmt.Printf("发送错误信息到终端失败: %v\n", sendErr)
-				}
+				// 注释掉下面的代码，避免在终端中输出上传日志
+				// _, sendErr := sc.ExecuteCommandWithoutNewline(serverID, fmt.Sprintf("echo \"上传命令格式错误: %s\"\n", parsedCmd.Command))
+				// if sendErr != nil {
+				// 	fmt.Printf("发送错误信息到终端失败: %v\n", sendErr)
+				// }
 			}
 			// 添加一个小延迟
 			time.Sleep(500 * time.Millisecond)
@@ -1110,20 +1098,16 @@ func (sc *SSHController) SendScriptToTerminal(scriptID string, serverID string) 
 				localPath := parts[1]
 
 				// 在终端中显示下载信息
-				_, sendErr := sc.ExecuteCommandWithoutNewline(serverID, fmt.Sprintf("echo \"正在下载文件: %s -> %s\"\n", remotePath, localPath))
-				if sendErr != nil {
-					fmt.Printf("发送信息到终端失败: %v\n", sendErr)
-				}
+				// 注释掉下面的代码，避免在终端中输出下载日志
+				// _, sendErr := sc.ExecuteCommandWithoutNewline(serverID, fmt.Sprintf("echo \"正在下载文件: %s -> %s\"\n", remotePath, localPath))
+				// if sendErr != nil {
+				// 	fmt.Printf("发送信息到终端失败: %v\n", sendErr)
+				// }
 
 				// 确保SFTP客户端已创建
 				err := sc.EnsureSFTPClient(serverID)
 				if err != nil {
 					fmt.Printf("创建SFTP客户端失败: %v\n", err)
-					// 发送错误信息到终端
-					_, sendErr := sc.ExecuteCommandWithoutNewline(serverID, fmt.Sprintf("echo \"创建SFTP客户端失败: %v\"\n", err))
-					if sendErr != nil {
-						fmt.Printf("发送错误信息到终端失败: %v\n", sendErr)
-					}
 					continue
 				}
 
@@ -1131,24 +1115,16 @@ func (sc *SSHController) SendScriptToTerminal(scriptID string, serverID string) 
 				_, err = sc.DownloadFile(serverID, remotePath, localPath)
 				if err != nil {
 					fmt.Printf("文件下载失败: %v\n", err)
-					// 发送错误信息到终端
-					_, sendErr := sc.ExecuteCommandWithoutNewline(serverID, fmt.Sprintf("echo \"文件下载失败: %v\"\n", err))
-					if sendErr != nil {
-						fmt.Printf("发送错误信息到终端失败: %v\n", sendErr)
-					}
 				} else {
-					// 发送成功信息到终端
-					_, sendErr := sc.ExecuteCommandWithoutNewline(serverID, fmt.Sprintf("echo \"文件下载成功: %s -> %s\"\n", remotePath, localPath))
-					if sendErr != nil {
-						fmt.Printf("发送成功信息到终端失败: %v\n", sendErr)
-					}
+					fmt.Printf("文件下载成功: %s -> %s\n", remotePath, localPath)
 				}
 			} else {
 				// 发送错误信息到终端
-				_, sendErr := sc.ExecuteCommandWithoutNewline(serverID, fmt.Sprintf("echo \"下载命令格式错误: %s\"\n", parsedCmd.Command))
-				if sendErr != nil {
-					fmt.Printf("发送错误信息到终端失败: %v\n", sendErr)
-				}
+				// 注释掉下面的代码，避免在终端中输出下载日志
+				// _, sendErr := sc.ExecuteCommandWithoutNewline(serverID, fmt.Sprintf("echo \"下载命令格式错误: %s\"\n", parsedCmd.Command))
+				// if sendErr != nil {
+				// 	fmt.Printf("发送错误信息到终端失败: %v\n", sendErr)
+				// }
 			}
 			// 添加一个小延迟
 			time.Sleep(500 * time.Millisecond)

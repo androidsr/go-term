@@ -236,8 +236,21 @@ export default {
         try {
           await HandleFileUploadRequest(serverId, localPath, remotePath);
           console.log(`文件上传完成: ${localPath} -> ${remotePath}`);
+          // 通过事件发送成功信息
+          this.$emit('file-operation-success', {
+            type: 'upload',
+            localPath,
+            remotePath
+          });
         } catch (error) {
           console.error(`文件上传失败: ${error.message}`);
+          // 通过事件发送错误信息
+          this.$emit('file-operation-error', {
+            type: 'upload',
+            localPath,
+            remotePath,
+            error: error.message
+          });
         }
       }
     },
@@ -250,8 +263,21 @@ export default {
         try {
           await HandleFileDownloadRequest(serverId, remotePath, localPath);
           console.log(`文件下载完成: ${remotePath} -> ${localPath}`);
+          // 通过事件发送成功信息
+          this.$emit('file-operation-success', {
+            type: 'download',
+            remotePath,
+            localPath
+          });
         } catch (error) {
           console.error(`文件下载失败: ${error.message}`);
+          // 通过事件发送错误信息
+          this.$emit('file-operation-error', {
+            type: 'download',
+            remotePath,
+            localPath,
+            error: error.message
+          });
         }
       }
     },
