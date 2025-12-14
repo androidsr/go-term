@@ -570,6 +570,30 @@ export default {
         }
       }
       
+      // 检查是否已经存在对应的终端标签页
+      const existingTab = this.terminalTabs.find(
+        tab => tab.serverId === server.id && tab.type === 'terminal'
+      );
+      
+      if (existingTab) {
+        // 如果已存在终端标签页，激活它并重新发送脚本命令
+        this.activeKey = existingTab.id;
+        
+        // 存储脚本信息，等待终端准备就绪后发送命令
+        this.pendingScript = {
+          script: script,
+          serverId: serverId
+        };
+        
+        // 直接尝试发送脚本到终端（适用于终端已经完全准备好的情况）
+        setTimeout(() => {
+          this.sendScriptToTerminal(script, serverId);
+          this.pendingScript = null;
+        }, 1500);
+        
+        return;
+      }
+      
       // 打开终端窗口
       this.openTerminal(server);
       
