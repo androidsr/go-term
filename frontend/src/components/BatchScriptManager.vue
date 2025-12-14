@@ -39,6 +39,14 @@
               <a-button size="small" type="primary" @click="executeScript(record)" :loading="executingScriptId === record.id">
               执行
             </a-button>
+            <!-- 添加终端执行按钮，仅对命令模式脚本可用 -->
+            <a-button 
+              v-if="record.executionType === 'command'" 
+              size="small" 
+              @click="executeScriptInTerminal(record)"
+            >
+              终端执行
+            </a-button>
             <a-button size="small" @click="editScript(record)">编辑</a-button>
             <a-popconfirm
               title="确定要删除这个脚本吗？"
@@ -181,7 +189,8 @@ import {
   ExecuteBatchScript,
   GetBatchScripts,
   UpdateBatchScript,
-  GetServerGroups
+  GetServerGroups,
+  SendScriptToTerminal // 添加导入
 } from '../../wailsjs/go/controllers/SSHController';
 
 export default {
@@ -381,6 +390,16 @@ export default {
       } finally {
         this.executingScriptId = '';
       }
+    },
+    
+    // 终端执行脚本方法
+    executeScriptInTerminal(script) {
+      // 触发自定义事件，传递脚本信息
+      // 让ServerManager来处理终端打开和命令发送
+      const event = new CustomEvent('execute-script-in-terminal', { 
+        detail: { script: script } 
+      });
+      window.dispatchEvent(event);
     },
 
     getStatusColor(status) {

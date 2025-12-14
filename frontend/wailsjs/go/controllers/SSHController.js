@@ -110,6 +110,14 @@ export function GetTerminalLastOutput(arg1) {
   return window['go']['controllers']['SSHController']['GetTerminalLastOutput'](arg1);
 }
 
+export function HandleFileDownloadRequest(arg1, arg2, arg3) {
+  return window['go']['controllers']['SSHController']['HandleFileDownloadRequest'](arg1, arg2, arg3);
+}
+
+export function HandleFileUploadRequest(arg1, arg2, arg3) {
+  return window['go']['controllers']['SSHController']['HandleFileUploadRequest'](arg1, arg2, arg3);
+}
+
 export function IsTerminalSessionActive(arg1) {
   return window['go']['controllers']['SSHController']['IsTerminalSessionActive'](arg1);
 }
@@ -124,6 +132,10 @@ export function ReadTerminalOutput(arg1) {
 
 export function ResizeTerminal(arg1, arg2, arg3) {
   return window['go']['controllers']['SSHController']['ResizeTerminal'](arg1, arg2, arg3);
+}
+
+export function SendScriptToTerminal(arg1, arg2) {
+  return window['go']['controllers']['SSHController']['SendScriptToTerminal'](arg1, arg2);
 }
 
 export function SetEncryptionConfig(arg1, arg2) {

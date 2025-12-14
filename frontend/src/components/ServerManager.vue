@@ -69,7 +69,7 @@
         <!-- 终端标签页 -->
         <a-tab-pane v-for="tab in terminalTabs" :key="tab.id" :tab="tab.title" closable>
           <div v-if="tab.type === 'terminal'" style="height: 100%; background: #1e1e1e; padding: 0; margin: 0">
-            <Terminal :server="tab.server" :server-id="tab.serverId" />
+            <Terminal :server="tab.server" :server-id="tab.serverId" @terminal-ready="checkPendingScript" />
           </div>
           <div v-else-if="tab.type === 'file'" style="height: 100%; padding: 0; margin: 0">
             <FileManager :server="tab.server" :server-id="tab.serverId" />
@@ -140,7 +140,9 @@ import {
   DisconnectFromServer,
   GetServerGroups,
   UpdateServer,
-  UpdateServerGroup
+  UpdateServerGroup,
+  HandleFileUploadRequest,
+  HandleFileDownloadRequest
 } from '../../wailsjs/go/controllers/SSHController';
 import Terminal from './Terminal.vue';
 import FileManager from './FileManager.vue';
@@ -169,6 +171,7 @@ export default {
       activeKey: 'home',
       terminalTabs: [],
       closedSessions: new Set(),
+      pendingScript: null, // 添加待处理脚本的存储
 
       // 分组模态框
       groupModalVisible: false,
@@ -202,10 +205,15 @@ export default {
   },
   async mounted() {
     await this.loadServerGroups();
+    // 添加对自定义事件的监听
+    window.addEventListener('execute-script-in-terminal', this.handleExecuteScriptInTerminal);
   },
+  
   beforeUnmount() {
-    this.terminalTabs = [];
+    // 移除事件监听
+    window.removeEventListener('execute-script-in-terminal', this.handleExecuteScriptInTerminal);
   },
+
   methods: {
     async loadServerGroups() {
       try {
@@ -520,6 +528,139 @@ export default {
       this.$nextTick(() => {
         this.activeKey = tabId;
       });
+    },
+
+    // 处理终端执行脚本的请求
+    async handleExecuteScriptInTerminal(event) {
+      const script = event.detail.script;
+      
+      // 选择服务器（这里选择第一个服务器，实际应用中可能需要用户选择）
+      if (script.serverIds.length === 0) {
+        this.$message.error('脚本没有关联的服务器');
+        return;
+      }
+      
+      const serverId = script.serverIds[0]; // 选择第一个服务器
+      
+      // 查找服务器信息
+      let server = null;
+      for (const group of this.groups) {
+        const found = group.servers.find(s => s.id === serverId);
+        if (found) {
+          server = found;
+          break;
+        }
+      }
+      
+      if (!server) {
+        this.$message.error('找不到指定的服务器');
+        return;
+      }
+      
+      // 确保服务器已连接
+      if (!server.connected) {
+        try {
+          const result = await ConnectToServer(server.id);
+          server.connected = true;
+          this.$message.success(result);
+        } catch (error) {
+          console.error('连接服务器失败:', error);
+          this.$message.error(`连接服务器失败: ${error.message}`);
+          return;
+        }
+      }
+      
+      // 打开终端窗口
+      this.openTerminal(server);
+      
+      // 存储脚本信息，等待终端准备就绪后发送命令
+      this.pendingScript = {
+        script: script,
+        serverId: serverId
+      };
+    },
+    
+    // 在终端组件挂载后检查是否有待处理的脚本
+    checkPendingScript(serverId) {
+      if (this.pendingScript && this.pendingScript.serverId === serverId) {
+        // 延迟一段时间确保终端完全准备好
+        setTimeout(() => {
+          this.sendScriptToTerminal(this.pendingScript.script, serverId);
+          this.pendingScript = null;
+        }, 1000);
+      }
+    },
+    
+    // 发送脚本命令到终端
+    async sendScriptToTerminal(script, serverId) {
+      // 解析脚本命令
+      const commands = script.content.split('\n').filter(cmd => cmd.trim() !== '');
+      
+      // 逐行发送命令
+      for (const command of commands) {
+        // 忽略注释和空行
+        if (command.trim() === '' || command.trim().startsWith('#')) {
+          continue;
+        }
+        
+        // 检查是否是文件上传命令
+        if (command.trim().startsWith('$upload ')) {
+          // 文件上传命令，调用实际的上传逻辑
+          const uploadParams = command.trim().substring(8).trim().split(/\s+/);
+          if (uploadParams.length >= 2) {
+            const localPath = uploadParams[0];
+            const remotePath = uploadParams[1];
+            
+            try {
+              // 调用后端的文件上传方法
+              await HandleFileUploadRequest(serverId, localPath, remotePath);
+              console.log(`文件上传完成: ${localPath} -> ${remotePath}`);
+            } catch (error) {
+              console.error('文件上传失败:', error);
+            }
+          } else {
+            console.error('上传命令格式错误:', command);
+          }
+          // 等待文件操作完成后再继续执行后续命令
+          await new Promise(resolve => setTimeout(resolve, 1000));
+          continue;
+        }
+        
+        // 检查是否是文件下载命令
+        if (command.trim().startsWith('$download ')) {
+          // 文件下载命令，调用实际的下载逻辑
+          const downloadParams = command.trim().substring(10).trim().split(/\s+/);
+          if (downloadParams.length >= 2) {
+            const remotePath = downloadParams[0];
+            const localPath = downloadParams[1];
+            
+            try {
+              // 调用后端的文件下载方法
+              await HandleFileDownloadRequest(serverId, remotePath, localPath);
+              console.log(`文件下载完成: ${remotePath} -> ${localPath}`);
+            } catch (error) {
+              console.error('文件下载失败:', error);
+            }
+          } else {
+            console.error('下载命令格式错误:', command);
+          }
+          // 等待文件操作完成后再继续执行后续命令
+          await new Promise(resolve => setTimeout(resolve, 1000));
+          continue;
+        }
+        
+        // 发送普通命令到终端
+        // 通过全局事件总线发送命令
+        const event = new CustomEvent('send-command-to-terminal', { 
+          detail: { serverId: serverId, command: command } 
+        });
+        window.dispatchEvent(event);
+        
+        // 等待一小段时间，模拟用户输入间隔
+        await new Promise(resolve => setTimeout(resolve, 500));
+      }
+      
+      this.$message.success('脚本命令已发送到终端');
     }
   }
 };

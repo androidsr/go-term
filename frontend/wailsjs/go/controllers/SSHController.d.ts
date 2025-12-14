@@ -58,6 +58,10 @@ export function GetServerGroups():Promise<Array<models.ServerGroup>>;
 
 export function GetTerminalLastOutput(arg1:string):Promise<string>;
 
+export function HandleFileDownloadRequest(arg1:string,arg2:string,arg3:string):Promise<void>;
+
+export function HandleFileUploadRequest(arg1:string,arg2:string,arg3:string):Promise<void>;
+
 export function IsTerminalSessionActive(arg1:string):Promise<boolean>;
 
 export function ListDirectory(arg1:string,arg2:string):Promise<Array<services.FileInfo>>;
@@ -65,6 +69,8 @@ export function ListDirectory(arg1:string,arg2:string):Promise<Array<services.Fi
 export function ReadTerminalOutput(arg1:string):Promise<string>;
 
 export function ResizeTerminal(arg1:string,arg2:number,arg3:number):Promise<string>;
+
+export function SendScriptToTerminal(arg1:string,arg2:string):Promise<void>;
 
 export function SetEncryptionConfig(arg1:boolean,arg2:string):Promise<void>;
 

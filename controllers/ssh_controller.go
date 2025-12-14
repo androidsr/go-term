@@ -993,6 +993,185 @@ func (sc *SSHController) ExecuteBatchScript(scriptID string) (map[string]models.
 	return results, nil
 }
 
+// SendScriptToTerminal 逐行发送脚本命令到终端（用于命令模式）
+func (sc *SSHController) SendScriptToTerminal(scriptID string, serverID string) error {
+	// 获取脚本
+	script, err := sc.scriptManager.GetScriptByID(scriptID)
+	if err != nil {
+		return fmt.Errorf("获取脚本失败: %v", err)
+	}
+
+	// 检查服务器是否在脚本的目标服务器列表中
+	found := false
+	for _, sid := range script.ServerIDs {
+		if sid == serverID {
+			found = true
+			break
+		}
+	}
+
+	if !found {
+		return fmt.Errorf("服务器不在脚本的目标服务器列表中")
+	}
+
+	// 只处理命令模式的脚本
+	if script.ExecutionType != "command" {
+		return fmt.Errorf("仅支持命令模式脚本的终端交互执行")
+	}
+
+	// 解析命令
+	parsedCommands := sc.enhancedExecutor.ParseCommands(script.Content)
+	if len(parsedCommands) == 0 {
+		return fmt.Errorf("脚本中没有有效的命令")
+	}
+
+	// 确保终端会话存在
+	_, err = sc.CreateTerminalSession(serverID)
+	if err != nil {
+		return fmt.Errorf("创建终端会话失败: %v", err)
+	}
+
+	// 逐行发送命令到终端
+	for _, parsedCmd := range parsedCommands {
+		// 处理文件上传命令
+		if parsedCmd.CommandType == "upload" {
+			// 解析上传命令参数
+			parts := strings.Fields(parsedCmd.Command)
+			if len(parts) >= 2 {
+				localPath := parts[0]
+				remoteDir := parts[1]
+
+				// 构造远程文件路径
+				localFileName := localPath
+				if idx := strings.LastIndex(localPath, "/"); idx != -1 {
+					localFileName = localPath[idx+1:]
+				} else if idx := strings.LastIndex(localPath, "\\"); idx != -1 {
+					localFileName = localPath[idx+1:]
+				}
+
+				remotePath := remoteDir
+				if !strings.HasSuffix(remoteDir, "/") {
+					remotePath += "/"
+				}
+				remotePath += localFileName
+
+				// 在终端中显示上传信息
+				_, sendErr := sc.ExecuteCommandWithoutNewline(serverID, fmt.Sprintf("echo \"正在上传文件: %s -> %s\"\n", localPath, remotePath))
+				if sendErr != nil {
+					fmt.Printf("发送信息到终端失败: %v\n", sendErr)
+				}
+
+				// 确保SFTP客户端已创建
+				err := sc.EnsureSFTPClient(serverID)
+				if err != nil {
+					fmt.Printf("创建SFTP客户端失败: %v\n", err)
+					// 发送错误信息到终端
+					_, sendErr := sc.ExecuteCommandWithoutNewline(serverID, fmt.Sprintf("echo \"创建SFTP客户端失败: %v\"\n", err))
+					if sendErr != nil {
+						fmt.Printf("发送错误信息到终端失败: %v\n", sendErr)
+					}
+					continue
+				}
+
+				// 执行上传操作并等待完成
+				_, err = sc.UploadFile(serverID, localPath, remotePath)
+				if err != nil {
+					fmt.Printf("文件上传失败: %v\n", err)
+					// 发送错误信息到终端
+					_, sendErr := sc.ExecuteCommandWithoutNewline(serverID, fmt.Sprintf("echo \"文件上传失败: %v\"\n", err))
+					if sendErr != nil {
+						fmt.Printf("发送错误信息到终端失败: %v\n", sendErr)
+					}
+				} else {
+					// 发送成功信息到终端
+					_, sendErr := sc.ExecuteCommandWithoutNewline(serverID, fmt.Sprintf("echo \"文件上传成功: %s -> %s\"\n", localPath, remotePath))
+					if sendErr != nil {
+						fmt.Printf("发送成功信息到终端失败: %v\n", sendErr)
+					}
+				}
+			} else {
+				// 发送错误信息到终端
+				_, sendErr := sc.ExecuteCommandWithoutNewline(serverID, fmt.Sprintf("echo \"上传命令格式错误: %s\"\n", parsedCmd.Command))
+				if sendErr != nil {
+					fmt.Printf("发送错误信息到终端失败: %v\n", sendErr)
+				}
+			}
+			// 添加一个小延迟
+			time.Sleep(500 * time.Millisecond)
+			continue
+		}
+
+		// 处理文件下载命令
+		if parsedCmd.CommandType == "download" {
+			// 解析下载命令参数
+			parts := strings.Fields(parsedCmd.Command)
+			if len(parts) >= 2 {
+				remotePath := parts[0]
+				localPath := parts[1]
+
+				// 在终端中显示下载信息
+				_, sendErr := sc.ExecuteCommandWithoutNewline(serverID, fmt.Sprintf("echo \"正在下载文件: %s -> %s\"\n", remotePath, localPath))
+				if sendErr != nil {
+					fmt.Printf("发送信息到终端失败: %v\n", sendErr)
+				}
+
+				// 确保SFTP客户端已创建
+				err := sc.EnsureSFTPClient(serverID)
+				if err != nil {
+					fmt.Printf("创建SFTP客户端失败: %v\n", err)
+					// 发送错误信息到终端
+					_, sendErr := sc.ExecuteCommandWithoutNewline(serverID, fmt.Sprintf("echo \"创建SFTP客户端失败: %v\"\n", err))
+					if sendErr != nil {
+						fmt.Printf("发送错误信息到终端失败: %v\n", sendErr)
+					}
+					continue
+				}
+
+				// 执行下载操作并等待完成
+				_, err = sc.DownloadFile(serverID, remotePath, localPath)
+				if err != nil {
+					fmt.Printf("文件下载失败: %v\n", err)
+					// 发送错误信息到终端
+					_, sendErr := sc.ExecuteCommandWithoutNewline(serverID, fmt.Sprintf("echo \"文件下载失败: %v\"\n", err))
+					if sendErr != nil {
+						fmt.Printf("发送错误信息到终端失败: %v\n", sendErr)
+					}
+				} else {
+					// 发送成功信息到终端
+					_, sendErr := sc.ExecuteCommandWithoutNewline(serverID, fmt.Sprintf("echo \"文件下载成功: %s -> %s\"\n", remotePath, localPath))
+					if sendErr != nil {
+						fmt.Printf("发送成功信息到终端失败: %v\n", sendErr)
+					}
+				}
+			} else {
+				// 发送错误信息到终端
+				_, sendErr := sc.ExecuteCommandWithoutNewline(serverID, fmt.Sprintf("echo \"下载命令格式错误: %s\"\n", parsedCmd.Command))
+				if sendErr != nil {
+					fmt.Printf("发送错误信息到终端失败: %v\n", sendErr)
+				}
+			}
+			// 添加一个小延迟
+			time.Sleep(500 * time.Millisecond)
+			continue
+		}
+
+		// 处理shell类型的命令，发送到终端
+		if parsedCmd.CommandType == "shell" {
+			// 发送命令到终端（不带换行符，让前端控制何时发送）
+			_, err = sc.ExecuteCommandWithoutNewline(serverID, parsedCmd.Command)
+			if err != nil {
+				// 记录错误但继续执行下一个命令
+				fmt.Printf("发送命令到终端失败: %v\n", err)
+			}
+
+			// 添加一个小延迟，让用户看到命令输入的过程
+			time.Sleep(500 * time.Millisecond)
+		}
+	}
+
+	return nil
+}
+
 // 实现CommandExecutor接口的方法（添加Exec前缀以避免命名冲突）
 func (sc *SSHController) ExecCommand(serverID, command string) (string, error) {
 	return sc.ExecuteCommand(serverID, command)
@@ -1004,6 +1183,40 @@ func (sc *SSHController) ExecUploadFile(serverID, localPath, remotePath string) 
 
 func (sc *SSHController) ExecDownloadFile(serverID, remotePath, localPath string) (string, error) {
 	return sc.DownloadFile(serverID, remotePath, localPath)
+}
+
+// HandleFileUploadRequest 处理文件上传请求
+func (sc *SSHController) HandleFileUploadRequest(serverID, localPath, remotePath string) error {
+	// 确保SFTP客户端已创建
+	err := sc.EnsureSFTPClient(serverID)
+	if err != nil {
+		return fmt.Errorf("创建SFTP客户端失败: %v", err)
+	}
+
+	// 执行上传操作并等待完成
+	_, err = sc.UploadFile(serverID, localPath, remotePath)
+	if err != nil {
+		return fmt.Errorf("文件上传失败: %v", err)
+	}
+
+	return nil
+}
+
+// HandleFileDownloadRequest 处理文件下载请求
+func (sc *SSHController) HandleFileDownloadRequest(serverID, remotePath, localPath string) error {
+	// 确保SFTP客户端已创建
+	err := sc.EnsureSFTPClient(serverID)
+	if err != nil {
+		return fmt.Errorf("创建SFTP客户端失败: %v", err)
+	}
+
+	// 执行下载操作并等待完成
+	_, err = sc.DownloadFile(serverID, remotePath, localPath)
+	if err != nil {
+		return fmt.Errorf("文件下载失败: %v", err)
+	}
+
+	return nil
 }
 
 // EnsureSFTPClient 确保SFTP客户端已创建

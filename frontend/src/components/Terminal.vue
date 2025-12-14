@@ -13,7 +13,9 @@ import {
   ExecuteCommandWithoutNewline,
   ReadTerminalOutput,
   ResizeTerminal,
-  CloseTerminalSession
+  CloseTerminalSession,
+  HandleFileUploadRequest,  // 添加导入
+  HandleFileDownloadRequest  // 添加导入
 } from '../../wailsjs/go/controllers/SSHController'
 
 export default {
@@ -36,11 +38,26 @@ export default {
     await this.initTerminal()
     window.addEventListener('resize', this.onResize)
     this.startReadOutput()
+    
+    // 通知父组件终端已准备就绪
+    this.$emit('terminal-ready', this.serverId);
+    
+    // 添加对发送命令事件的监听
+    window.addEventListener('send-command-to-terminal', this.handleSendCommand);
+    
+    // 添加对文件上传/下载请求的监听
+    window.addEventListener('file-upload-request', this.handleFileUpload);
+    window.addEventListener('file-download-request', this.handleFileDownload);
   },
 
   beforeUnmount() {
     window.removeEventListener('resize', this.onResize)
     clearInterval(this.outputTimer)
+    
+    // 移除事件监听
+    window.removeEventListener('send-command-to-terminal', this.handleSendCommand);
+    window.removeEventListener('file-upload-request', this.handleFileUpload);
+    window.removeEventListener('file-download-request', this.handleFileDownload);
     
     // 清理终端实例，但只有在已加载且未被dispose的情况下才销毁
     if (this.terminal && typeof this.terminal.dispose === 'function') {
@@ -191,7 +208,54 @@ export default {
             })
         }
       }
-    }
+    },
+
+    // 处理发送命令事件
+    handleSendCommand(event) {
+      const { serverId, command } = event.detail;
+      if (serverId === this.serverId) {
+        this.sendCommand(command);
+      }
+    },
+
+    // 添加发送命令的方法
+    sendCommand(command) {
+      if (this.terminal && typeof this.onData === 'function') {
+        // 发送命令文本
+        this.onData(command);
+        // 发送回车键
+        this.onData('\r');
+      }
+    },
+    
+    // 处理文件上传请求
+    async handleFileUpload(event) {
+      const { serverId, localPath, remotePath } = event.detail;
+      if (serverId === this.serverId) {
+        // 调用后端的文件上传方法
+        try {
+          await HandleFileUploadRequest(serverId, localPath, remotePath);
+          console.log(`文件上传完成: ${localPath} -> ${remotePath}`);
+        } catch (error) {
+          console.error(`文件上传失败: ${error.message}`);
+        }
+      }
+    },
+    
+    // 处理文件下载请求
+    async handleFileDownload(event) {
+      const { serverId, remotePath, localPath } = event.detail;
+      if (serverId === this.serverId) {
+        // 调用后端的文件下载方法
+        try {
+          await HandleFileDownloadRequest(serverId, remotePath, localPath);
+          console.log(`文件下载完成: ${remotePath} -> ${localPath}`);
+        } catch (error) {
+          console.error(`文件下载失败: ${error.message}`);
+        }
+      }
+    },
+
   }
 }
 </script>
