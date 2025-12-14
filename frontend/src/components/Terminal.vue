@@ -1,12 +1,13 @@
 <template>
   <div class="terminal-container">
-    <div ref="terminalElement" class="terminal-element"></div>
+    <div ref="terminalElement" class="terminal-element" @contextmenu="handleContextMenu"></div>
   </div>
 </template>
 
 <script>
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
+import { ClipboardAddon } from '@xterm/addon-clipboard'
 import '@xterm/xterm/css/xterm.css'
 import {
   CreateTerminalSessionWithSize,
@@ -100,6 +101,11 @@ export default {
 
         this.fitAddon = new FitAddon()
         this.terminal.loadAddon(this.fitAddon)
+        
+        // 添加剪贴板支持
+        const clipboardAddon = new ClipboardAddon()
+        this.terminal.loadAddon(clipboardAddon)
+        
         this.terminal.open(this.$refs.terminalElement)
         this.fitAddon.fit()
 
@@ -168,6 +174,13 @@ export default {
         return
       }
       
+      // 处理 Ctrl+V (粘贴)
+      if (ev.ctrlKey && ev.key === 'v' && ev.shiftKey) {
+        ev.preventDefault()
+        // xterm.js会自动处理粘贴操作
+        return
+      }
+      
       // 处理 Ctrl+Z
       if (ev.ctrlKey && ev.key === 'z') {
         ev.preventDefault()
@@ -208,6 +221,74 @@ export default {
             })
         }
       }
+    },
+
+    // 处理右键菜单
+    handleContextMenu(event) {
+      event.preventDefault();
+      
+      // 创建自定义右键菜单
+      const menu = document.createElement('div');
+      menu.className = 'terminal-context-menu';
+      menu.style.position = 'absolute';
+      menu.style.left = event.pageX + 'px';
+      menu.style.top = event.pageY + 'px';
+      menu.style.zIndex = '1000';
+      menu.style.backgroundColor = '#fff';
+      menu.style.border = '1px solid #ccc';
+      menu.style.boxShadow = '0 2px 10px rgba(0,0,0,0.2)';
+      menu.style.padding = '5px 0';
+      
+      // 复制选项
+      const copyItem = document.createElement('div');
+      copyItem.textContent = '复制';
+      copyItem.style.padding = '5px 15px';
+      copyItem.style.cursor = 'pointer';
+      copyItem.onmouseover = () => copyItem.style.backgroundColor = '#f0f0f0';
+      copyItem.onmouseout = () => copyItem.style.backgroundColor = 'transparent';
+      copyItem.onclick = () => {
+        // 使用xterm的API复制选中文本
+        this.terminal.getSelection() && navigator.clipboard.writeText(this.terminal.getSelection());
+        document.body.removeChild(menu);
+      };
+      menu.appendChild(copyItem);
+      
+      // 粘贴选项
+      const pasteItem = document.createElement('div');
+      pasteItem.textContent = '粘贴';
+      pasteItem.style.padding = '5px 15px';
+      pasteItem.style.cursor = 'pointer';
+      pasteItem.onmouseover = () => pasteItem.style.backgroundColor = '#f0f0f0';
+      pasteItem.onmouseout = () => pasteItem.style.backgroundColor = 'transparent';
+      pasteItem.onclick = async () => {
+        try {
+          const text = await navigator.clipboard.readText();
+          if (text) {
+            // 发送粘贴的文本到终端
+            this.onData(text);
+          }
+        } catch (err) {
+          console.error('粘贴失败:', err);
+        }
+        document.body.removeChild(menu);
+      };
+      menu.appendChild(pasteItem);
+      
+      // 添加到页面
+      document.body.appendChild(menu);
+      
+      // 点击其他地方关闭菜单
+      const closeMenu = (e) => {
+        if (!menu.contains(e.target)) {
+          document.body.removeChild(menu);
+          document.removeEventListener('click', closeMenu);
+        }
+      };
+      
+      // 延迟添加事件监听器，避免立即触发
+      setTimeout(() => {
+        document.addEventListener('click', closeMenu);
+      }, 100);
     },
 
     // 处理发送命令事件
@@ -296,5 +377,22 @@ export default {
 .terminal-element {
   height: 100%;
   padding: 10px;
+}
+
+/* 右键菜单样式 */
+.terminal-context-menu {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-size: 14px;
+  min-width: 100px;
+}
+
+.terminal-context-menu div {
+  padding: 8px 16px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.terminal-context-menu div:hover {
+  background-color: #e6f7ff;
 }
 </style>
