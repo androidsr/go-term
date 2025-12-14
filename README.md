@@ -304,6 +304,19 @@ $download /remote/file.txt C:\path\to\local\directory\
 - 尝试调整终端窗口大小
 - 检查远程服务器的终端设置
 - 确认网络连接稳定
+## 🤝 贡献指南
+
+欢迎提交 Issue 和 Pull Request 来完善这个项目！
+
+## 📞 联系我们
+
+- **项目维护者**：sirui
+- **技术支持邮箱**：srandroid@163.com
+- **微信号**：scrqrr
+
+## 💰支持与打赏
+- 🙏** 感谢土豪大哥的打赏 **
+- <img width="500" height="475" alt="image" src="https://github.com/user-attachments/assets/f13e8645-95cd-4e00-98c3-a232c552fbd6" />
 
 ## 许可证
 
