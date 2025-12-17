@@ -102,6 +102,10 @@ export function GetBatchScripts() {
   return window['go']['controllers']['SSHController']['GetBatchScripts']();
 }
 
+export function GetServerConnectionStatus() {
+  return window['go']['controllers']['SSHController']['GetServerConnectionStatus']();
+}
+
 export function GetServerGroups() {
   return window['go']['controllers']['SSHController']['GetServerGroups']();
 }

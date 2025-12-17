@@ -54,6 +54,8 @@ export function GetAutoCompleteSuggestions(arg1:string,arg2:string):Promise<Arra
 
 export function GetBatchScripts():Promise<Array<models.BatchScript>>;
 
+export function GetServerConnectionStatus():Promise<Record<string, boolean>>;
+
 export function GetServerGroups():Promise<Array<models.ServerGroup>>;
 
 export function GetTerminalLastOutput(arg1:string):Promise<string>;

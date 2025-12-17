@@ -132,6 +132,32 @@ func (sc *SSHController) GetServerGroups() []models.ServerGroup {
 	return sc.serverManager.GetGroups()
 }
 
+// GetServerConnectionStatus 获取服务器连接状态
+func (sc *SSHController) GetServerConnectionStatus() map[string]bool {
+	sc.mutex.RLock()
+	defer sc.mutex.RUnlock()
+
+	status := make(map[string]bool)
+	
+	for serverID, conn := range sc.connections {
+		if conn != nil && conn.Client != nil {
+			// 检查连接是否仍然有效
+			_, err := conn.Client.NewSession()
+			if err == nil {
+				status[serverID] = true
+			} else {
+				// 连接已断开，清理
+				delete(sc.connections, serverID)
+				status[serverID] = false
+			}
+		} else {
+			status[serverID] = false
+		}
+	}
+	
+	return status
+}
+
 // AddServerGroup 添加服务器分组
 func (sc *SSHController) AddServerGroup(group models.ServerGroup) error {
 	sc.mutex.Lock()
