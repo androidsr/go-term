@@ -48,10 +48,18 @@
                           @click="connectServer(record)" :loading="record.loading">
                           <WifiOutlined />{{ record.connected ? '断开' : '连接' }}
                         </a-button>
-                        <a-button size="small" :disabled="!record.connected" @click="openTerminal(record)">终端</a-button>
-                        <a-button size="small" :disabled="!record.connected" @click="manageFiles(record)">文件</a-button>
-                        <a-button size="small" :disabled="record.connected" @click="editServer(record)">编辑</a-button>
-                        <a-button size="small" :disabled="record.connected" @click="deleteServer(record)">删除</a-button>
+                        <a-button size="small" :disabled="!record.connected" @click="openTerminal(record)">
+                          <CodeOutlined />终端
+                        </a-button>
+                        <a-button size="small" :disabled="!record.connected" @click="manageFiles(record)">
+                          <FolderOutlined />文件
+                        </a-button>
+                        <a-button size="small" :disabled="record.connected" @click="editServer(record)">
+                          <EditOutlined />编辑
+                        </a-button>
+                        <a-button size="small" :disabled="record.connected" @click="deleteServer(record)">
+                          <DeleteOutlined />删除
+                        </a-button>
                       </a-space>
                     </template>
                   </template>
@@ -124,13 +132,6 @@
 
 <script>
 import {
-  DeleteOutlined,
-  DownOutlined,
-  EditOutlined,
-  FolderOutlined,
-  PlusOutlined
-} from '@ant-design/icons-vue';
-import {
   AddServer,
   AddServerGroup,
   CloseTerminalSession,
@@ -143,7 +144,6 @@ import {
   UpdateServerGroup,
   HandleFileUploadRequest,
   HandleFileDownloadRequest,
-  SendScriptToTerminal // 添加导入
 } from '../../wailsjs/go/controllers/SSHController';
 import Terminal from './Terminal.vue';
 import FileManager from './FileManager.vue';
@@ -152,11 +152,6 @@ import BatchScriptManager from './BatchScriptManager.vue';
 export default {
   name: 'ServerManager',
   components: {
-    FolderOutlined,
-    EditOutlined,
-    DeleteOutlined,
-    PlusOutlined,
-    DownOutlined,
     Terminal,
     FileManager,
     BatchScriptManager

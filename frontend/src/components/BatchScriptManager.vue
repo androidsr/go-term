@@ -31,11 +31,11 @@
             <a-button size="small" type="primary"
               @click="record.executionType === 'script' ? executeScript(record) : executeScriptInTerminal(record)"
               :loading="executingScriptId === record.id">
-              执行
+              <CodeOutlined />执行
             </a-button>
-            <a-button size="small" @click="editScript(record)">编辑</a-button>
+            <a-button size="small" @click="editScript(record)"><EditOutlined />编辑</a-button>
             <a-popconfirm title="确定要删除这个脚本吗？" ok-text="确认" cancel-text="取消" @confirm="deleteScript(record)">
-              <a-button size="small" danger>删除</a-button>
+              <a-button size="small" danger><DeleteOutlined />删除</a-button>
             </a-popconfirm>
           </a-space>
         </template>
