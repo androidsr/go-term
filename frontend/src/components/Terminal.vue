@@ -369,14 +369,14 @@ export default {
 
 <style scoped>
 .terminal-container {
-  height: 92vh;
+  height: 100%;
   position: relative;
   background: #1e1e1e;
 }
 
 .terminal-element {
   height: 100%;
-  padding: 10px;
+  padding: 0 0 0 4px;
 }
 
 /* 右键菜单样式 */
