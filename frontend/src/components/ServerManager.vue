@@ -15,12 +15,12 @@
                 <a-menu :selectedKeys="selectedGroupKeys" mode="inline" @select="onGroupSelect">
                   <a-menu-item v-for="group in groups" :key="group.id">
                     <template #icon>
-                      <folder-outlined />
+                      <FolderOutlined />
                     </template>
                     {{ group.name }}
                     <span class="group-actions">
-                      <edit-outlined @click.stop="editGroup(group)" />
-                      <delete-outlined @click.stop="deleteGroup(group.id)" />
+                      <EditOutlined @click.stop="editGroup(group)" />
+                      <DeleteOutlined @click.stop="deleteGroup(group.id)" />
                     </span>
                   </a-menu-item>
                 </a-menu>
@@ -31,11 +31,11 @@
               <a-layout-content class="content">
                 <div class="server-header">
                   <a-button v-if="currentGroupId" type="primary" @click="showAddServerModal">
-                    <plus-outlined /> 添加服务器
+                    <PlusOutlined /> 添加服务器
                   </a-button>
                 </div>
 
-                <a-table :dataSource="currentServers" :columns="serverColumns" :pagination="false" rowKey="id">
+                <a-table :dataSource="currentServers" :columns="serverColumns" :pagination="false" rowKey="id" size="small">
                   <template #bodyCell="{ column, record }">
                     <template v-if="column.dataIndex === 'status'">
                       <a-tag :color="record.connected ? 'green' : 'red'">
@@ -148,13 +148,27 @@ import {
 import Terminal from './Terminal.vue';
 import FileManager from './FileManager.vue';
 import BatchScriptManager from './BatchScriptManager.vue';
+import {
+  FolderOutlined,
+  EditOutlined,
+  DeleteOutlined,
+  PlusOutlined,
+  WifiOutlined,
+  CodeOutlined
+} from '@ant-design/icons-vue';
 
 export default {
   name: 'ServerManager',
   components: {
     Terminal,
     FileManager,
-    BatchScriptManager
+    BatchScriptManager,
+    FolderOutlined,
+    EditOutlined,
+    DeleteOutlined,
+    PlusOutlined,
+    WifiOutlined,
+    CodeOutlined
   },
   data() {
     return {

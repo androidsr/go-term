@@ -8,8 +8,7 @@
         @search="onSearch" />
     </div>
 
-    <a-table :dataSource="filteredScripts" :columns="scriptColumns" :pagination="{ pageSize: 10 }" rowKey="id"
-      >
+    <a-table :dataSource="filteredScripts" :columns="scriptColumns" :pagination="{ pageSize: 10 }" rowKey="id" size="small">
       <template #bodyCell="{ column, record }">
         <template v-if="column.dataIndex === 'content'">
           <a-tooltip :title="record.content">
@@ -33,9 +32,13 @@
               :loading="executingScriptId === record.id">
               <CodeOutlined />执行
             </a-button>
-            <a-button size="small" @click="editScript(record)"><EditOutlined />编辑</a-button>
+            <a-button size="small" @click="editScript(record)">
+              <EditOutlined />编辑
+            </a-button>
             <a-popconfirm title="确定要删除这个脚本吗？" ok-text="确认" cancel-text="取消" @confirm="deleteScript(record)">
-              <a-button size="small" danger><DeleteOutlined />删除</a-button>
+              <a-button size="small" danger>
+                <DeleteOutlined />删除
+              </a-button>
             </a-popconfirm>
           </a-space>
         </template>
@@ -43,8 +46,8 @@
     </a-table>
 
     <!-- 添加/编辑脚本模态框 -->
-    <a-modal v-model:open="scriptModalVisible" :title="editingScript ? '编辑脚本' : '新建脚本'" width="800px" @ok="handleScriptModalOk"
-      @cancel="scriptModalVisible = false">
+    <a-modal v-model:open="scriptModalVisible" :title="editingScript ? '编辑脚本' : '新建脚本'" width="800px"
+      @ok="handleScriptModalOk" @cancel="scriptModalVisible = false">
       <a-form :model="scriptForm" layout="vertical">
         <a-form-item label="脚本名称" required>
           <a-input v-model:value="scriptForm.name" placeholder="请输入脚本名称" />
@@ -143,7 +146,7 @@
 </template>
 
 <script>
-import { PlusOutlined, SelectOutlined } from '@ant-design/icons-vue';
+
 import {
   AddBatchScript,
   DeleteBatchScript,
@@ -152,12 +155,22 @@ import {
   UpdateBatchScript,
   GetServerGroups
 } from '../../wailsjs/go/controllers/SSHController';
+import {
+  EditOutlined,
+  DeleteOutlined,
+  PlusOutlined,
+  SelectOutlined,
+  CodeOutlined
+} from '@ant-design/icons-vue';
 
 export default {
   name: 'BatchScriptManager',
   components: {
     PlusOutlined,
-    SelectOutlined
+    SelectOutlined,
+    EditOutlined,
+    DeleteOutlined,
+    CodeOutlined
   },
   data() {
     return {

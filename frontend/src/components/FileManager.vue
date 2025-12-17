@@ -7,20 +7,20 @@
           <div class="file-header">
             <div class="path-navigation">
               <a-button @click="goToParentDirectory" :disabled="isRootDirectory">
-                <arrow-up-outlined />上级
+                <ArrowUpOutlined />上级
               </a-button>
               <a-input-search v-model:value="pathInput" placeholder="输入目录路径" style="width: 300px; margin-left: 10px;"
                 @search="navigateToPath" />
             </div>
             <div class="file-actions">
               <a-button @click="selectAndUploadFile">
-                <upload-outlined />上传文件
+                <UploadOutlined />上传文件
               </a-button>
               <a-button @click="showCreateFolderModal">
-                <folder-add-outlined />新建文件夹
+                <FolderAddOutlined />新建文件夹
               </a-button>
               <a-button @click="refreshFileList">
-                <reload-outlined />刷新
+                <ReloadOutlined />刷新
               </a-button>
             </div>
           </div>
@@ -30,8 +30,8 @@
             <template #bodyCell="{ column, record }">
               <template v-if="column.dataIndex === 'name'">
                 <div class="file-name-cell">
-                  <folder-outlined v-if="record.type === 'dir'" />
-                  <file-outlined v-else />
+                  <FolderOutlined v-if="record.type === 'dir'" />
+                  <FileOutlined v-else />
                   <span class="file-name" v-if="record.type === 'dir'" @click="handleFileClick(record)">{{ record.name
                     }}</span>
                   <span v-else>{{ record.name }}</span>
