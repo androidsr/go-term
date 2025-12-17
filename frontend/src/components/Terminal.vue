@@ -369,14 +369,24 @@ export default {
 
 <style scoped>
 .terminal-container {
-  height: 100%;
+  height: calc(100vh - 52px);
   position: relative;
   background: #1e1e1e;
 }
 
 .terminal-element {
   height: 100%;
-  padding: 0 0 0 4px;
+  padding: 0 0 4px 4px;
+}
+
+/* 隐藏滚动条 */
+.terminal-element ::-webkit-scrollbar {
+  display: none;
+}
+
+.terminal-element {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
 }
 
 /* 右键菜单样式 */
