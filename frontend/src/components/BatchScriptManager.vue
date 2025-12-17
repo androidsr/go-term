@@ -9,7 +9,7 @@
     </div>
 
     <a-table :dataSource="filteredScripts" :columns="scriptColumns" :pagination="{ pageSize: 10 }" rowKey="id"
-      size="small">
+      >
       <template #bodyCell="{ column, record }">
         <template v-if="column.dataIndex === 'content'">
           <a-tooltip :title="record.content">
@@ -43,7 +43,7 @@
     </a-table>
 
     <!-- 添加/编辑脚本模态框 -->
-    <a-modal :open="scriptModalVisible" :title="editingScript ? '编辑脚本' : '新建脚本'" width="800px" @ok="handleScriptModalOk"
+    <a-modal v-model:open="scriptModalVisible" :title="editingScript ? '编辑脚本' : '新建脚本'" width="800px" @ok="handleScriptModalOk"
       @cancel="scriptModalVisible = false">
       <a-form :model="scriptForm" layout="vertical">
         <a-form-item label="脚本名称" required>
@@ -150,8 +150,7 @@ import {
   ExecuteBatchScript,
   GetBatchScripts,
   UpdateBatchScript,
-  GetServerGroups,
-  SendScriptToTerminal // 添加导入
+  GetServerGroups
 } from '../../wailsjs/go/controllers/SSHController';
 
 export default {

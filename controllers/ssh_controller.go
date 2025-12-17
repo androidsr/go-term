@@ -291,83 +291,82 @@ func (sc *SSHController) ExecuteCommand(serverID, command string) (string, error
 	return result, nil
 }
 
-// DisconnectFromServer 断开服务器连接
+// DisconnectFromServer 断开服务器连接 - 修复死锁版本
 func (sc *SSHController) DisconnectFromServer(serverID string) (string, error) {
-	// 为避免同一 server 的并发 create/close/断连相互影响，使用 per-server lock 序列化
-	serverLock := sc.getServerLock(serverID)
-	serverLock.Lock()
-	defer serverLock.Unlock()
-
-	// 读取会话与连接副本（短锁）
+	// 使用超时上下文避免死锁
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	
+	// 分步操作，避免锁嵌套
+	
+	// 1. 先获取连接信息（只读）
 	sc.mutex.RLock()
 	session, hasSession := sc.terminalSessions[serverID]
 	conn, hasConn := sc.connections[serverID]
 	sftpClient, hasSftp := sc.sftpClients[serverID]
 	sc.mutex.RUnlock()
-
-	var errMsg string
-
-	// 关闭终端会话（不持全局锁）
-	if hasSession {
-		log.Printf("正在关闭服务器 %s 的终端会话", serverID)
-		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-		defer cancel()
-
-		closeChan := make(chan error, 1)
-		go func() {
-			closeChan <- session.Close()
-		}()
-
-		select {
-		case err := <-closeChan:
-			// EOF错误在连接已断开时是正常的，不需要报告为错误
-			if err != nil && err != io.EOF {
-				errMsg = fmt.Sprintf("关闭终端会话时出错: %v", err)
-				log.Printf("关闭终端会话时出错: %v", err)
-			} else if err == io.EOF {
-				log.Printf("终端会话已断开连接: %v", serverID)
-			}
-		case <-ctx.Done():
-			errMsg = "关闭终端会话超时"
-			log.Printf("关闭终端会话超时，强制终止")
+	
+	var errMsgs []string
+	
+	// 2. 在无锁状态下关闭资源
+	if hasSession && session != nil {
+		if err := sc.closeSessionWithTimeout(ctx, session); err != nil {
+			errMsgs = append(errMsgs, fmt.Sprintf("关闭终端会话失败: %v", err))
 		}
-		log.Printf("服务器 %s 的终端会话已关闭", serverID)
 	}
-
-	// 关闭 SFTP 客户端（如果有）
-	if hasSftp {
-		log.Printf("正在关闭服务器 %s 的 SFTP 客户端", serverID)
+	
+	if hasSftp && sftpClient != nil {
 		if err := sftpClient.Close(); err != nil {
-			log.Printf("关闭 SFTP 客户端时出错: %v", err)
+			log.Printf("关闭SFTP客户端警告: %v", err)
 		}
 	}
-
-	// 关闭 SSH 连接（不持全局锁）
-	if hasConn {
-		log.Printf("正在关闭服务器 %s 的SSH连接", serverID)
+	
+	if hasConn && conn != nil {
 		conn.Close()
-		log.Printf("服务器 %s 的SSH连接已关闭", serverID)
 	}
-
-	// 最后清理数据结构（短锁）
+	
+	// 3. 最后清理数据结构
 	sc.mutex.Lock()
 	if hasSession {
 		delete(sc.terminalSessions, serverID)
 	}
-	if hasConn {
-		delete(sc.connections, serverID)
-	}
 	if hasSftp {
 		delete(sc.sftpClients, serverID)
 	}
-	sc.mutex.Unlock()
-
-	log.Printf("服务器 %s 的连接已完全断开", serverID)
-
-	if errMsg != "" {
-		return "", fmt.Errorf("%s", errMsg)
+	if hasConn {
+		delete(sc.connections, serverID)
 	}
-	return "服务器连接已断开", nil
+	sc.mutex.Unlock()
+	
+	// 清理per-server锁
+	sc.locksMutex.Lock()
+	delete(sc.perServerLocks, serverID)
+	sc.locksMutex.Unlock()
+	
+	if len(errMsgs) > 0 {
+		return "", fmt.Errorf("断开连接时发生错误: %s", strings.Join(errMsgs, "; "))
+	}
+	
+	return "服务器连接已安全断开", nil
+}
+
+// closeSessionWithTimeout 带超时的会话关闭
+func (sc *SSHController) closeSessionWithTimeout(ctx context.Context, session *services.TerminalSession) error {
+	resultChan := make(chan error, 1)
+	
+	go func() {
+		resultChan <- session.Close()
+	}()
+	
+	select {
+	case err := <-resultChan:
+		if err != nil && err != io.EOF {
+			return err
+		}
+		return nil
+	case <-ctx.Done():
+		return fmt.Errorf("关闭会话超时")
+	}
 }
 
 // IsTerminalSessionActive 检查终端会话是否仍然活跃
@@ -380,66 +379,98 @@ func (sc *SSHController) IsTerminalSessionActive(serverID string) bool {
 		return false
 	}
 
-	// 检查会话通道是否仍然开放
+	return sc.isSessionActive(session)
+}
+
+// isConnectionHealthy 检查连接健康状态
+func (sc *SSHController) isConnectionHealthy(serverID string) bool {
+	sc.mutex.RLock()
+	conn, exists := sc.connections[serverID]
+	sc.mutex.RUnlock()
+	
+	if !exists || conn == nil || conn.Client == nil {
+		return false
+	}
+	
+	// 简单的连通性检查
+	_, err := conn.Client.NewSession()
+	if err != nil {
+		// 连接已断开，清理
+		sc.mutex.Lock()
+		delete(sc.connections, serverID)
+		sc.mutex.Unlock()
+		return false
+	}
+	
+	return true
+}
+
+// isSessionActive 检查会话是否真正活跃
+func (sc *SSHController) isSessionActive(session *services.TerminalSession) bool {
+	if session == nil || session.OutputChan == nil {
+		return false
+	}
+	
 	select {
 	case _, ok := <-session.OutputChan:
-		return ok
+		return ok // 如果channel已关闭，返回false
 	default:
-		// 通道未关闭，会话仍然活跃
+		// channel正常，尝试发送一个简单的心跳命令
+		// 这里可以添加更复杂的健康检查逻辑
 		return true
 	}
 }
 
-// CreateTerminalSession 创建终端会话
+// CreateTerminalSession 创建终端会话 - 修复竞态条件
 func (sc *SSHController) CreateTerminalSession(serverID string) (string, error) {
-	// 先短锁读取 connection 和会话存在性
+	// 1. 检查连接状态
+	if !sc.isConnectionHealthy(serverID) {
+		return "", fmt.Errorf("服务器连接无效，请重新连接")
+	}
+	
+	// 2. 检查现有会话（使用更严格的检查）
+	sc.mutex.RLock()
+	existingSession, exists := sc.terminalSessions[serverID]
+	sc.mutex.RUnlock()
+	
+	if exists && existingSession != nil {
+		// 验证会话是否真的有效
+		if sc.isSessionActive(existingSession) {
+			return "终端会话已存在且活跃", nil
+		}
+		
+		// 清理无效会话
+		sc.mutex.Lock()
+		delete(sc.terminalSessions, serverID)
+		sc.mutex.Unlock()
+	}
+	
+	// 3. 使用无锁方式创建会话
 	sc.mutex.RLock()
 	conn, exists := sc.connections[serverID]
-	_, sessionExists := sc.terminalSessions[serverID]
 	sc.mutex.RUnlock()
-
+	
 	if !exists || conn.Client == nil {
-		return "", fmt.Errorf("服务器未连接，请先连接服务器")
+		return "", fmt.Errorf("服务器未连接")
 	}
-
-	// 检查现有会话是否有效
-	if sessionExists {
-		// 检查会话是否仍然活跃
-		if !sc.IsTerminalSessionActive(serverID) {
-			// 会话已失效，清理并允许创建新会话
-			sc.mutex.Lock()
-			delete(sc.terminalSessions, serverID)
-			sc.mutex.Unlock()
-		} else {
-			// 会话仍然有效
-			return "终端会话已存在", nil
-		}
-	}
-
-	// 使用 per-server lock 序列化本服务器的 create/close 操作
-	serverLock := sc.getServerLock(serverID)
-	serverLock.Lock()
-	defer serverLock.Unlock()
-
-	// createTerminal 是耗时 IO —— 必须在没有持有全局 sc.mutex 的情况下执行
-	// 使用默认的终端尺寸 80x24
+	
+	// 创建会话（耗时操作，不持锁）
 	terminalSession, err := conn.CreateTerminalSession(80, 24)
 	if err != nil {
 		return "", fmt.Errorf("创建终端会话失败: %v", err)
 	}
-
-	// 创建成功后用短锁写回 map
+	
+	// 4. 原子性存储新会话
 	sc.mutex.Lock()
-	// 再次检查（double-check）避免竞态：在我们创建期间别人可能已创建
-	if _, ok := sc.terminalSessions[serverID]; ok {
-		// 已有会话：关闭我们刚创建的会话并返回已存在
+	// 最终检查，避免重复创建
+	if _, exists := sc.terminalSessions[serverID]; exists {
 		sc.mutex.Unlock()
-		_ = terminalSession.Close()
+		terminalSession.Close() // 清理多余的会话
 		return "终端会话已存在", nil
 	}
 	sc.terminalSessions[serverID] = terminalSession
 	sc.mutex.Unlock()
-
+	
 	return "终端会话创建成功", nil
 }
 
@@ -882,16 +913,24 @@ func (sc *SSHController) ExecuteBatchScript(scriptID string) (map[string]models.
 		}
 	}
 
-	// 并发执行脚本
+// 并发执行脚本 - 添加并发控制
 	results := make(map[string]models.ScriptExecution)
 	var wg sync.WaitGroup
 	var resultMutex sync.Mutex
+	
+	// 并发控制 - 限制最大并发数为10
+	maxConcurrent := 10
+	semaphore := make(chan struct{}, maxConcurrent)
 
 	for _, serverID := range script.ServerIDs {
 		wg.Add(1)
 		go func(sid string) {
 			defer wg.Done()
-
+			
+			// 获取信号量
+			semaphore <- struct{}{}
+			defer func() { <-semaphore }()
+			
 			execution := models.ScriptExecution{
 				ID:             fmt.Sprintf("exec_%s_%s_%d", scriptID, sid, time.Now().Unix()),
 				ScriptID:       scriptID,

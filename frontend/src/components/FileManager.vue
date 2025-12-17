@@ -9,12 +9,8 @@
               <a-button @click="goToParentDirectory" :disabled="isRootDirectory">
                 <arrow-up-outlined />上级
               </a-button>
-              <a-input-search
-                v-model:value="pathInput"
-                placeholder="输入目录路径"
-                style="width: 300px; margin-left: 10px;"
-                @search="navigateToPath"
-              />
+              <a-input-search v-model:value="pathInput" placeholder="输入目录路径" style="width: 300px; margin-left: 10px;"
+                @search="navigateToPath" />
             </div>
             <div class="file-actions">
               <a-button @click="selectAndUploadFile">
@@ -29,21 +25,15 @@
             </div>
           </div>
 
-          <a-table 
-            :dataSource="fileList" 
-            :columns="fileColumns" 
-            :pagination="false" 
-            rowKey="name"
-            :loading="loading"
-            :scroll="{ y: 'calc(100vh - 200px)' }"
-            size="small"
-          >
+          <a-table :dataSource="fileList" :columns="fileColumns" :pagination="false" rowKey="name" :loading="loading"
+            :scroll="{ y: 'calc(100vh - 200px)' }" size="small">
             <template #bodyCell="{ column, record }">
               <template v-if="column.dataIndex === 'name'">
                 <div class="file-name-cell">
                   <folder-outlined v-if="record.type === 'dir'" />
                   <file-outlined v-else />
-                  <span class="file-name" v-if="record.type === 'dir'" @click="handleFileClick(record)">{{ record.name }}</span>
+                  <span class="file-name" v-if="record.type === 'dir'" @click="handleFileClick(record)">{{ record.name
+                    }}</span>
                   <span v-else>{{ record.name }}</span>
                 </div>
               </template>
@@ -55,11 +45,7 @@
               </template>
               <template v-else-if="column.dataIndex === 'action'">
                 <a-space>
-                  <a-button 
-                    v-if="record.type === 'file'" 
-                    size="small" 
-                    @click="downloadFile(record)"
-                  >
+                  <a-button v-if="record.type === 'file'" size="small" @click="downloadFile(record)">
                     下载
                   </a-button>
                   <a-button size="small" @click="deleteFile(record)">删除</a-button>
@@ -81,12 +67,7 @@
     </a-modal>
 
     <!-- 文件选择对话框 -->
-    <input 
-      ref="fileInput" 
-      type="file" 
-      style="display: none" 
-      @change="onFileSelected"
-    />
+    <input ref="fileInput" type="file" style="display: none" @change="onFileSelected" />
   </div>
 </template>
 
@@ -99,7 +80,7 @@ import {
   ReloadOutlined,
   ArrowUpOutlined
 } from '@ant-design/icons-vue';
-import { 
+import {
   CreateSFTPClient,
   ListDirectory,
   UploadFile,
@@ -191,7 +172,7 @@ export default {
         this.currentPath = path;
         this.pathInput = path;
         this.fileList = files || []; // 确保即使返回null也设置为空数组
-        
+
         // 如果文件列表为空，显示提示信息
         if (!files || files.length === 0) {
           console.log('No files found in directory');
@@ -217,7 +198,7 @@ export default {
 
     async goToParentDirectory() {
       if (this.isRootDirectory) return;
-      
+
       // 获取父目录路径
       const parentPath = this.currentPath.substring(0, this.currentPath.lastIndexOf('/'));
       if (parentPath === '') {
@@ -229,12 +210,12 @@ export default {
 
     async navigateToPath(path) {
       if (!path) return;
-      
+
       // 确保路径以/开头
       if (!path.startsWith('/')) {
         path = '/' + path;
       }
-      
+
       await this.loadFileList(path);
     },
 
@@ -250,12 +231,12 @@ export default {
         const localPath = await OpenFileDialog('选择要上传的文件', [
           { displayName: 'All Files', pattern: '*' }
         ]);
-        
+
         if (localPath) {
           // 从文件路径中提取文件名
           const fileName = localPath.split('\\').pop().split('/').pop();
           const remotePath = `${this.currentPath}/${fileName}`;
-          
+
           const result = await UploadFile(this.serverId, localPath, remotePath);
           this.$message.success(result);
           await this.refreshFileList();
@@ -285,7 +266,7 @@ export default {
         // 使用Wails的文件保存对话框让用户选择保存位置
         const { SaveFileDialog } = window.go.main.App;
         const localPath = await SaveFileDialog('选择保存位置', file.name);
-        
+
         if (localPath) {
           const result = await DownloadFile(this.serverId, file.path, localPath);
           this.$message.success(result);
@@ -419,11 +400,11 @@ export default {
     flex-direction: column;
     align-items: stretch;
   }
-  
+
   .path-navigation {
     justify-content: center;
   }
-  
+
   .file-actions {
     justify-content: center;
   }
