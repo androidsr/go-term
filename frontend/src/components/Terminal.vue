@@ -249,6 +249,10 @@ export default {
       copyItem.onclick = () => {
         // 使用xterm的API复制选中文本
         this.terminal.getSelection() && navigator.clipboard.writeText(this.terminal.getSelection());
+        // 确保终端重新获得焦点
+        this.$nextTick(() => {
+          this.terminal.focus();
+        });
         document.body.removeChild(menu);
       };
       menu.appendChild(copyItem);
@@ -266,6 +270,10 @@ export default {
           if (text) {
             // 发送粘贴的文本到终端
             this.onData(text);
+            // 确保终端重新获得焦点
+            this.$nextTick(() => {
+              this.terminal.focus();
+            });
           }
         } catch (err) {
           console.error('粘贴失败:', err);
