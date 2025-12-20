@@ -39,13 +39,13 @@ export default {
     await this.initTerminal()
     window.addEventListener('resize', this.onResize)
     this.startReadOutput()
-    
+
     // 通知父组件终端已准备就绪
     this.$emit('terminal-ready', this.serverId);
-    
+
     // 添加对发送命令事件的监听
     window.addEventListener('send-command-to-terminal', this.handleSendCommand);
-    
+
     // 添加对文件上传/下载请求的监听
     window.addEventListener('file-upload-request', this.handleFileUpload);
     window.addEventListener('file-download-request', this.handleFileDownload);
@@ -54,12 +54,12 @@ export default {
   beforeUnmount() {
     window.removeEventListener('resize', this.onResize)
     clearInterval(this.outputTimer)
-    
+
     // 移除事件监听
     window.removeEventListener('send-command-to-terminal', this.handleSendCommand);
     window.removeEventListener('file-upload-request', this.handleFileUpload);
     window.removeEventListener('file-download-request', this.handleFileDownload);
-    
+
     // 清理终端实例，但只有在已加载且未被dispose的情况下才销毁
     if (this.terminal && typeof this.terminal.dispose === 'function') {
       try {
@@ -69,13 +69,13 @@ export default {
       }
       this.terminal = null
     }
-    
+
     // 清理fitAddon，但只有在已加载的情况下才销毁
     if (this.fitAddon) {
       // fitAddon通常不需要显式销毁，但如果我们需要确保它被清理，可以设置为null
       this.fitAddon = null
     }
-    
+
     // 如果组件销毁时仍有未完成的操作，尝试通知后端
     // 但只在会话尚未关闭且serverId存在的情况下调用
     if (this.serverId && !this.sessionClosed) {
@@ -101,17 +101,17 @@ export default {
 
         this.fitAddon = new FitAddon()
         this.terminal.loadAddon(this.fitAddon)
-        
+
         // 添加剪贴板支持
         const clipboardAddon = new ClipboardAddon()
         this.terminal.loadAddon(clipboardAddon)
-        
+
         this.terminal.open(this.$refs.terminalElement)
         this.fitAddon.fit()
 
         // 直接将所有输入发送到后端，启用真正的PTY模式
         this.terminal.onData(this.onData)
-        
+
         // 处理特殊按键
         this.terminal.onKey(this.onKey)
 
@@ -159,35 +159,35 @@ export default {
     // onKey 处理特殊按键组合
     onKey: async function (e) {
       const ev = e.domEvent
-      
+
       // 处理 Ctrl+L 清屏
       if (ev.ctrlKey && ev.key === 'l') {
         ev.preventDefault()
         await ExecuteCommandWithoutNewline(this.serverId, '\x0c') // Ctrl+L
         return
       }
-      
+
       // 处理 Ctrl+C
       if (ev.ctrlKey && ev.key === 'c') {
         ev.preventDefault()
         await ExecuteCommandWithoutNewline(this.serverId, '\x03') // Ctrl+C
         return
       }
-      
+
       // 处理 Ctrl+V (粘贴)
       if (ev.ctrlKey && ev.key === 'v' && ev.shiftKey) {
         ev.preventDefault()
         // xterm.js会自动处理粘贴操作
         return
       }
-      
+
       // 处理 Ctrl+Z
       if (ev.ctrlKey && ev.key === 'z') {
         ev.preventDefault()
         await ExecuteCommandWithoutNewline(this.serverId, '\x1a') // Ctrl+Z
         return
       }
-      
+
       // 处理 Ctrl+R (反向搜索历史)
       if (ev.ctrlKey && ev.key === 'r') {
         ev.preventDefault()
@@ -209,7 +209,7 @@ export default {
 
     onResize() {
       this.fitAddon?.fit()
-      
+
       // 同步窗口大小到远端TTY
       if (this.terminal && this.fitAddon) {
         const dims = this.fitAddon.proposeDimensions()
@@ -226,7 +226,7 @@ export default {
     // 处理右键菜单
     handleContextMenu(event) {
       event.preventDefault();
-      
+
       // 创建自定义右键菜单
       const menu = document.createElement('div');
       menu.className = 'terminal-context-menu';
@@ -238,7 +238,7 @@ export default {
       menu.style.border = '1px solid #ccc';
       menu.style.boxShadow = '0 2px 10px rgba(0,0,0,0.2)';
       menu.style.padding = '5px 0';
-      
+
       // 复制选项
       const copyItem = document.createElement('div');
       copyItem.textContent = '复制';
@@ -252,7 +252,7 @@ export default {
         document.body.removeChild(menu);
       };
       menu.appendChild(copyItem);
-      
+
       // 粘贴选项
       const pasteItem = document.createElement('div');
       pasteItem.textContent = '粘贴';
@@ -273,10 +273,10 @@ export default {
         document.body.removeChild(menu);
       };
       menu.appendChild(pasteItem);
-      
+
       // 添加到页面
       document.body.appendChild(menu);
-      
+
       // 点击其他地方关闭菜单
       const closeMenu = (e) => {
         if (!menu.contains(e.target)) {
@@ -284,7 +284,7 @@ export default {
           document.removeEventListener('click', closeMenu);
         }
       };
-      
+
       // 延迟添加事件监听器，避免立即触发
       setTimeout(() => {
         document.addEventListener('click', closeMenu);
@@ -308,7 +308,7 @@ export default {
         this.onData('\r');
       }
     },
-    
+
     // 处理文件上传请求
     async handleFileUpload(event) {
       const { serverId, localPath, remotePath } = event.detail;
@@ -335,7 +335,7 @@ export default {
         }
       }
     },
-    
+
     // 处理文件下载请求
     async handleFileDownload(event) {
       const { serverId, remotePath, localPath } = event.detail;
@@ -370,23 +370,60 @@ export default {
 <style scoped>
 .terminal-container {
   height: calc(100vh - 52px);
-  position: relative;
+  display: flex;
+  margin: 0;
+  flex-direction: column;
+  background: #1e1e1e;
+  overflow: hidden;
+}
+
+.terminal-element {
+  flex: 1;
+  padding: 0 0 0 4px;
+  margin: 0;
+  overflow: hidden;
+}
+
+/* 重写 xterm.js 默认样式以修复布局问题 */
+.terminal-element :deep(.xterm) {
+  height: 100% !important;
+  width: 100% !important;
+  background-color: #1e1e1e !important;
+  border-radius: 0 !important;
+  margin: 0 !important;
+}
+
+.terminal-element :deep(.xterm-viewport) {
+  background-color: #1e1e1e !important;
+  scrollbar-color: #666 #1e1e1e;
+}
+
+.terminal-element :deep(.xterm-screen) {
+  background-color: #1e1e1e !important;
+  padding: 0 !important;
+  margin: 0 !important;
+}
+
+.terminal-element :deep(.xterm-helper-textarea) {
+  background-color: #1e1e1e !important;
+}
+
+/* 滚动条样式优化 */
+.terminal-element :deep(.xterm-viewport::-webkit-scrollbar) {
+  width: 8px;
+}
+
+.terminal-element :deep(.xterm-viewport::-webkit-scrollbar-track) {
   background: #1e1e1e;
 }
 
-.terminal-element {
-  height: 100%;
-  padding: 0 0 4px 4px;
+.terminal-element :deep(.xterm-viewport::-webkit-scrollbar-thumb) {
+  background: #666;
+  border-radius: 4px;
 }
 
-/* 隐藏滚动条 */
-.terminal-element ::-webkit-scrollbar {
-  display: none;
-}
-
-.terminal-element {
-  -ms-overflow-style: none;
-  scrollbar-width: none;
+.terminal-element :deep(.xterm-viewport::-webkit-scrollbar-thumb:hover) {
+  background: #888;
 }
 
 /* 右键菜单样式 */
