@@ -31,7 +31,11 @@ export default {
       terminal: null,
       fitAddon: null,
       outputTimer: null,
-      sessionClosed: false // 添加标志避免重复关闭
+      sessionClosed: false, // 添加标志避免重复关闭
+      consecutiveEmpty: 0,   // 连续空输出计数
+      currentInterval: 50,  // 当前轮询间隔
+      lastBufferCheck: 0,   // 上次缓冲区检查时间
+      contextMenu: null     // 缓存右键菜单实例
     }
   },
 
@@ -59,6 +63,12 @@ export default {
     window.removeEventListener('send-command-to-terminal', this.handleSendCommand);
     window.removeEventListener('file-upload-request', this.handleFileUpload);
     window.removeEventListener('file-download-request', this.handleFileDownload);
+
+    // 清理右键菜单
+    if (this.contextMenu) {
+      document.body.removeChild(this.contextMenu);
+      this.contextMenu = null;
+    }
 
     // 清理终端实例，但只有在已加载且未被dispose的情况下才销毁
     if (this.terminal && typeof this.terminal.dispose === 'function') {
@@ -202,30 +212,42 @@ export default {
     /* ========== 输出读取 ========== */
 
     startReadOutput() {
-      let consecutiveEmpty = 0
-      this.outputTimer = setInterval(async () => {
+      const adjustPolling = () => {
+        // 动态调整轮询间隔
+        if (this.consecutiveEmpty > 20) { // 1秒无输出
+          this.currentInterval = Math.min(200, this.currentInterval * 1.2) // 逐渐增加到最大200ms
+        } else if (this.consecutiveEmpty === 0) { // 有新输出
+          this.currentInterval = 50 // 恢复高频率
+        }
+      }
+
+      const pollOutput = async () => {
         const out = await ReadTerminalOutput(this.serverId)
         if (out) {
-          consecutiveEmpty = 0
+          this.consecutiveEmpty = 0
           this.terminal.write(out)
           
-          // 如果终端缓冲区接近上限，主动清理最前面的内容
-          // 这里我们保守一点，当缓冲区使用超过80%时就开始清理
-          const buffer = this.terminal.buffer.active
-          if (buffer.length > 400) { // 500行的80%
-            // 清理最前面的100行，保持缓冲区在合理范围内
-            this.terminal.scrollToBottom()
-            // xterm.js 会自动管理缓冲区大小，但我们可以确保它不超过限制
+          // 优化缓冲区检查 - 每秒检查一次而不是每次轮询
+          const now = Date.now()
+          if (now - this.lastBufferCheck > 1000) {
+            this.lastBufferCheck = now
+            const buffer = this.terminal.buffer.active
+            if (buffer.length > 400) {
+              this.terminal.scrollToBottom()
+            }
           }
         } else {
-          consecutiveEmpty++
-          // 如果连续一段时间没有输出，可以适当降低轮询频率
-          if (consecutiveEmpty > 100) { // 5秒没有输出
-            // 可以考虑调整间隔，但保持当前的50ms以确保响应性
-            consecutiveEmpty = 0
-          }
+          this.consecutiveEmpty++
         }
-      }, 50) // 更高的刷新频率以获得更流畅的体验
+        
+        adjustPolling()
+        
+        // 重新设置定时器以使用新间隔
+        clearInterval(this.outputTimer)
+        this.outputTimer = setInterval(pollOutput, this.currentInterval)
+      }
+
+      this.outputTimer = setInterval(pollOutput, this.currentInterval)
     },
 
     onResize() {
@@ -244,80 +266,92 @@ export default {
       }
     },
 
-    // 处理右键菜单
+    // 处理右键菜单 - 优化版本，避免重复创建DOM
     handleContextMenu(event) {
       event.preventDefault();
 
-      // 创建自定义右键菜单
+      // 复用或创建菜单
+      if (!this.contextMenu) {
+        this.contextMenu = this.createContextMenu();
+        document.body.appendChild(this.contextMenu);
+      }
+
+      // 更新位置
+      this.contextMenu.style.left = event.pageX + 'px';
+      this.contextMenu.style.top = event.pageY + 'px';
+      this.contextMenu.style.display = 'block';
+
+      // 点击其他地方关闭菜单
+      setTimeout(() => {
+        document.addEventListener('click', this.closeContextMenu, { once: true });
+      }, 100);
+    },
+
+    // 创建右键菜单实例 - 只创建一次
+    createContextMenu() {
       const menu = document.createElement('div');
       menu.className = 'terminal-context-menu';
       menu.style.position = 'absolute';
-      menu.style.left = event.pageX + 'px';
-      menu.style.top = event.pageY + 'px';
       menu.style.zIndex = '1000';
       menu.style.backgroundColor = '#fff';
       menu.style.border = '1px solid #ccc';
       menu.style.boxShadow = '0 2px 10px rgba(0,0,0,0.2)';
       menu.style.padding = '5px 0';
+      menu.style.display = 'none';
+      
+      // 使用innerHTML和事件委托提高性能
+      menu.innerHTML = `
+        <div data-action="copy" class="menu-item">复制</div>
+        <div data-action="paste" class="menu-item">粘贴</div>
+      `;
 
-      // 复制选项
-      const copyItem = document.createElement('div');
-      copyItem.textContent = '复制';
-      copyItem.style.padding = '5px 15px';
-      copyItem.style.cursor = 'pointer';
-      copyItem.onmouseover = () => copyItem.style.backgroundColor = '#f0f0f0';
-      copyItem.onmouseout = () => copyItem.style.backgroundColor = 'transparent';
-      copyItem.onclick = () => {
-        // 使用xterm的API复制选中文本
-        this.terminal.getSelection() && navigator.clipboard.writeText(this.terminal.getSelection());
-        // 确保终端重新获得焦点
-        this.$nextTick(() => {
-          this.terminal.focus();
+      // 使用事件委托
+      menu.addEventListener('click', (e) => {
+        const action = e.target.dataset.action;
+        if (action === 'copy') {
+          this.handleCopy();
+        } else if (action === 'paste') {
+          this.handlePaste();
+        }
+        menu.style.display = 'none';
+      });
+
+      return menu;
+    },
+
+    // 关闭菜单方法
+    closeContextMenu(e) {
+      if (this.contextMenu && !this.contextMenu.contains(e.target)) {
+        this.contextMenu.style.display = 'none';
+      }
+    },
+
+    // 复制方法
+    handleCopy() {
+      const selection = this.terminal.getSelection();
+      if (selection) {
+        navigator.clipboard.writeText(selection).catch(err => {
+          console.error('复制失败:', err);
         });
-        document.body.removeChild(menu);
-      };
-      menu.appendChild(copyItem);
+      }
+      this.$nextTick(() => {
+        this.terminal.focus();
+      });
+    },
 
-      // 粘贴选项
-      const pasteItem = document.createElement('div');
-      pasteItem.textContent = '粘贴';
-      pasteItem.style.padding = '5px 15px';
-      pasteItem.style.cursor = 'pointer';
-      pasteItem.onmouseover = () => pasteItem.style.backgroundColor = '#f0f0f0';
-      pasteItem.onmouseout = () => pasteItem.style.backgroundColor = 'transparent';
-      pasteItem.onclick = async () => {
-        try {
-          const text = await navigator.clipboard.readText();
-          if (text) {
-            // 发送粘贴的文本到终端
-            this.onData(text);
-            // 确保终端重新获得焦点
-            this.$nextTick(() => {
-              this.terminal.focus();
-            });
-          }
-        } catch (err) {
-          console.error('粘贴失败:', err);
+    // 粘贴方法
+    async handlePaste() {
+      try {
+        const text = await navigator.clipboard.readText();
+        if (text) {
+          this.onData(text);
+          this.$nextTick(() => {
+            this.terminal.focus();
+          });
         }
-        document.body.removeChild(menu);
-      };
-      menu.appendChild(pasteItem);
-
-      // 添加到页面
-      document.body.appendChild(menu);
-
-      // 点击其他地方关闭菜单
-      const closeMenu = (e) => {
-        if (!menu.contains(e.target)) {
-          document.body.removeChild(menu);
-          document.removeEventListener('click', closeMenu);
-        }
-      };
-
-      // 延迟添加事件监听器，避免立即触发
-      setTimeout(() => {
-        document.addEventListener('click', closeMenu);
-      }, 100);
+      } catch (err) {
+        console.error('粘贴失败:', err);
+      }
     },
 
     // 处理发送命令事件
@@ -462,13 +496,14 @@ export default {
   min-width: 100px;
 }
 
-.terminal-context-menu div {
+.terminal-context-menu .menu-item {
   padding: 8px 16px;
   cursor: pointer;
   user-select: none;
+  transition: background-color 0.1s ease;
 }
 
-.terminal-context-menu div:hover {
+.terminal-context-menu .menu-item:hover {
   background-color: #e6f7ff;
 }
 </style>
