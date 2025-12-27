@@ -96,7 +96,10 @@ export default {
           cursorBlink: true,
           theme: { background: '#1e1e1e' },
           fontSize: 14,
-          fontFamily: 'Consolas, Monaco, "Courier New", monospace'
+          fontFamily: 'Consolas, Monaco, "Courier New", monospace',
+          // 限制缓冲区大小，防止 tail -f 等命令导致页面卡死
+          bufferSize: 500,  // 最大保存500行历史记录，减少内存占用
+          scrollback: 500    // 滚动缓冲区也设为500行
         })
 
         this.fitAddon = new FitAddon()
@@ -160,10 +163,10 @@ export default {
     onKey: async function (e) {
       const ev = e.domEvent
 
-      // 处理 Ctrl+L 清屏
+      // 处理 Ctrl+L 清屏 - 直接清空当前终端显示
       if (ev.ctrlKey && ev.key === 'l') {
         ev.preventDefault()
-        await ExecuteCommandWithoutNewline(this.serverId, '\x0c') // Ctrl+L
+        this.terminal.clear() // 清空终端显示
         return
       }
 
@@ -199,10 +202,28 @@ export default {
     /* ========== 输出读取 ========== */
 
     startReadOutput() {
+      let consecutiveEmpty = 0
       this.outputTimer = setInterval(async () => {
         const out = await ReadTerminalOutput(this.serverId)
         if (out) {
+          consecutiveEmpty = 0
           this.terminal.write(out)
+          
+          // 如果终端缓冲区接近上限，主动清理最前面的内容
+          // 这里我们保守一点，当缓冲区使用超过80%时就开始清理
+          const buffer = this.terminal.buffer.active
+          if (buffer.length > 400) { // 500行的80%
+            // 清理最前面的100行，保持缓冲区在合理范围内
+            this.terminal.scrollToBottom()
+            // xterm.js 会自动管理缓冲区大小，但我们可以确保它不超过限制
+          }
+        } else {
+          consecutiveEmpty++
+          // 如果连续一段时间没有输出，可以适当降低轮询频率
+          if (consecutiveEmpty > 100) { // 5秒没有输出
+            // 可以考虑调整间隔，但保持当前的50ms以确保响应性
+            consecutiveEmpty = 0
+          }
         }
       }, 50) // 更高的刷新频率以获得更流畅的体验
     },

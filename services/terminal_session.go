@@ -65,7 +65,7 @@ func (s *SSHConnection) CreateTerminalSession(width, height int) (*TerminalSessi
 		Stdin:      stdin,
 		stdout:     stdout,
 		stderr:     stderr,
-		OutputChan: make(chan []byte, 100),
+		OutputChan: make(chan []byte, 200), // 适中的缓冲区大小，平衡内存和性能
 		ErrorChan:  make(chan []byte, 100),
 		closeChan:  make(chan struct{}),
 		width:      width,
@@ -91,11 +91,23 @@ func (ts *TerminalSession) readLoop(r io.Reader, out chan []byte) {
 				// 必须复制，否则 buf 复用导致数据错乱
 				data := make([]byte, n)
 				copy(data, buf[:n])
-				// 检查通道是否已关闭
+				// 检查通道是否已关闭，使用非阻塞发送避免在高输出时阻塞
 				select {
 				case out <- data:
 				case <-ts.closeChan:
 					return
+				default:
+					// 如果通道满了，丢弃最旧的数据为新数据腾出空间
+					// 这样可以确保 tail -f 等高输出命令不会阻塞整个终端
+					select {
+					case <-out: // 丢弃一个旧数据
+						out <- data // 发送新数据
+					case <-ts.closeChan:
+						return
+					default:
+						// 如果还是发不出去，直接丢弃这个数据包
+						// 这比阻塞整个读取循环要好
+					}
 				}
 
 				// 同时更新输出缓冲区，用于处理自动补全等场景
