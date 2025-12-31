@@ -828,6 +828,29 @@ func (sc *SSHController) ExecuteCommandWithoutNewline(serverID, command string) 
 	return "", fmt.Errorf("终端会话不存在")
 }
 
+// InterruptCommand 中断当前正在执行的命令（发送 Ctrl+C）
+func (sc *SSHController) InterruptCommand(serverID string) (string, error) {
+	sc.mutex.RLock()
+	session, hasSession := sc.terminalSessions[serverID]
+	sc.mutex.RUnlock()
+
+	if !hasSession {
+		return "", fmt.Errorf("终端会话不存在")
+	}
+
+	// 发送多次 Ctrl+C 确保中断信号能够发送
+	// 在高输出场景下，一次可能不够
+	for i := 0; i < 3; i++ {
+		if err := session.SendCommandWithoutNewline("\x03"); err != nil {
+			return "", fmt.Errorf("发送中断信号失败: %v", err)
+		}
+		// 短暂延迟，确保信号被处理
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	return "命令已中断", nil
+}
+
 // CloseTerminalSession 关闭指定的终端会话
 func (sc *SSHController) CloseTerminalSession(serverID string) (string, error) {
 	// 序列化同 server 的操作

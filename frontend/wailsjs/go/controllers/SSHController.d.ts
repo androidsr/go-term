@@ -64,6 +64,8 @@ export function HandleFileDownloadRequest(arg1:string,arg2:string,arg3:string):P
 
 export function HandleFileUploadRequest(arg1:string,arg2:string,arg3:string):Promise<void>;
 
+export function InterruptCommand(arg1:string):Promise<string>;
+
 export function IsTerminalSessionActive(arg1:string):Promise<boolean>;
 
 export function ListDirectory(arg1:string,arg2:string):Promise<Array<services.FileInfo>>;

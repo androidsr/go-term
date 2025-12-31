@@ -1,6 +1,33 @@
 <template>
   <div class="terminal-container">
     <div ref="terminalElement" class="terminal-element" @contextmenu="handleContextMenu"></div>
+
+    <!-- 使用 Ant Design Vue 的 Dropdown 组件 -->
+    <a-dropdown
+      v-model:open="contextMenuVisible"
+      :trigger="[]"
+      placement="bottomLeft"
+    >
+      <div class="context-menu-trigger" :style="contextMenuStyle"></div>
+      <template #overlay>
+        <a-menu @click="handleMenuClick">
+          <a-menu-item key="copy">
+            <CopyOutlined /> 复制
+          </a-menu-item>
+          <a-menu-item key="paste">
+            <ScissorOutlined /> 粘贴
+          </a-menu-item>
+          <a-menu-divider />
+          <a-menu-item key="interrupt" class="danger-menu-item">
+            <StopOutlined /> 中断命令
+          </a-menu-item>
+          <a-menu-divider />
+          <a-menu-item key="clear">
+            <ClearOutlined /> 清空屏幕
+          </a-menu-item>
+        </a-menu>
+      </template>
+    </a-dropdown>
   </div>
 </template>
 
@@ -12,15 +39,23 @@ import '@xterm/xterm/css/xterm.css'
 import {
   CreateTerminalSessionWithSize,
   ExecuteCommandWithoutNewline,
+  InterruptCommand,
   ReadTerminalOutput,
   ResizeTerminal,
   CloseTerminalSession,
   HandleFileUploadRequest,  // 添加导入
   HandleFileDownloadRequest  // 添加导入
 } from '../../wailsjs/go/controllers/SSHController'
+import { CopyOutlined, ScissorOutlined, StopOutlined, ClearOutlined } from '@ant-design/icons-vue'
 
 export default {
   name: 'TerminalComponent',
+  components: {
+    CopyOutlined,
+    ScissorOutlined,
+    StopOutlined,
+    ClearOutlined
+  },
   props: {
     server: Object,
     serverId: String
@@ -35,7 +70,11 @@ export default {
       consecutiveEmpty: 0,   // 连续空输出计数
       currentInterval: 50,  // 当前轮询间隔
       lastBufferCheck: 0,   // 上次缓冲区检查时间
-      contextMenu: null     // 缓存右键菜单实例
+      contextMenuVisible: false,
+      contextMenuStyle: {
+        position: 'absolute',
+        display: 'none'
+      }
     }
   },
 
@@ -63,12 +102,6 @@ export default {
     window.removeEventListener('send-command-to-terminal', this.handleSendCommand);
     window.removeEventListener('file-upload-request', this.handleFileUpload);
     window.removeEventListener('file-download-request', this.handleFileDownload);
-
-    // 清理右键菜单
-    if (this.contextMenu) {
-      document.body.removeChild(this.contextMenu);
-      this.contextMenu = null;
-    }
 
     // 清理终端实例，但只有在已加载且未被dispose的情况下才销毁
     if (this.terminal && typeof this.terminal.dispose === 'function') {
@@ -226,7 +259,7 @@ export default {
         if (out) {
           this.consecutiveEmpty = 0
           this.terminal.write(out)
-          
+
           // 优化缓冲区检查 - 每秒检查一次而不是每次轮询
           const now = Date.now()
           if (now - this.lastBufferCheck > 1000) {
@@ -239,9 +272,9 @@ export default {
         } else {
           this.consecutiveEmpty++
         }
-        
+
         adjustPolling()
-        
+
         // 重新设置定时器以使用新间隔
         clearInterval(this.outputTimer)
         this.outputTimer = setInterval(pollOutput, this.currentInterval)
@@ -266,64 +299,54 @@ export default {
       }
     },
 
-    // 处理右键菜单 - 优化版本，避免重复创建DOM
+    /* ========== 右键菜单 ========== */
+
+    // 处理右键菜单 - 使用 Ant Design Vue
     handleContextMenu(event) {
       event.preventDefault();
 
-      // 复用或创建菜单
-      if (!this.contextMenu) {
-        this.contextMenu = this.createContextMenu();
-        document.body.appendChild(this.contextMenu);
-      }
+      // 设置触发器位置
+      this.contextMenuStyle = {
+        position: 'absolute',
+        left: event.pageX + 'px',
+        top: event.pageY + 'px',
+        display: 'block'
+      };
 
-      // 更新位置
-      this.contextMenu.style.left = event.pageX + 'px';
-      this.contextMenu.style.top = event.pageY + 'px';
-      this.contextMenu.style.display = 'block';
+      // 显示菜单
+      this.$nextTick(() => {
+        this.contextMenuVisible = true;
 
-      // 点击其他地方关闭菜单
-      setTimeout(() => {
-        document.addEventListener('click', this.closeContextMenu, { once: true });
-      }, 100);
+        // 点击其他地方关闭菜单
+        setTimeout(() => {
+          document.addEventListener('click', this.closeContextMenu, { once: true });
+        }, 100);
+      });
     },
 
-    // 创建右键菜单实例 - 只创建一次
-    createContextMenu() {
-      const menu = document.createElement('div');
-      menu.className = 'terminal-context-menu';
-      menu.style.position = 'absolute';
-      menu.style.zIndex = '1000';
-      menu.style.backgroundColor = '#fff';
-      menu.style.border = '1px solid #ccc';
-      menu.style.boxShadow = '0 2px 10px rgba(0,0,0,0.2)';
-      menu.style.padding = '5px 0';
-      menu.style.display = 'none';
-      
-      // 使用innerHTML和事件委托提高性能
-      menu.innerHTML = `
-        <div data-action="copy" class="menu-item">复制</div>
-        <div data-action="paste" class="menu-item">粘贴</div>
-      `;
+    // 处理菜单点击
+    handleMenuClick({ key }) {
+      this.contextMenuVisible = false;
 
-      // 使用事件委托
-      menu.addEventListener('click', (e) => {
-        const action = e.target.dataset.action;
-        if (action === 'copy') {
+      switch (key) {
+        case 'copy':
           this.handleCopy();
-        } else if (action === 'paste') {
+          break;
+        case 'paste':
           this.handlePaste();
-        }
-        menu.style.display = 'none';
-      });
-
-      return menu;
+          break;
+        case 'interrupt':
+          this.handleInterrupt();
+          break;
+        case 'clear':
+          this.terminal.clear();
+          break;
+      }
     },
 
     // 关闭菜单方法
     closeContextMenu(e) {
-      if (this.contextMenu && !this.contextMenu.contains(e.target)) {
-        this.contextMenu.style.display = 'none';
-      }
+      this.contextMenuVisible = false;
     },
 
     // 复制方法
@@ -351,6 +374,19 @@ export default {
         }
       } catch (err) {
         console.error('粘贴失败:', err);
+      }
+    },
+
+    // 中断命令方法 - 发送Ctrl+C
+    async handleInterrupt() {
+      try {
+        // 使用专门的中断方法，确保在高输出场景下也能立即中断
+        await InterruptCommand(this.serverId);
+        this.$nextTick(() => {
+          this.terminal.focus();
+        });
+      } catch (err) {
+        console.error('中断命令失败:', err);
       }
     },
 
@@ -489,21 +525,19 @@ export default {
   background: #888;
 }
 
-/* 右键菜单样式 */
-.terminal-context-menu {
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-  font-size: 14px;
-  min-width: 100px;
+/* Ant Design 右键菜单样式 */
+.context-menu-trigger {
+  width: 0;
+  height: 0;
+  pointer-events: none;
 }
 
-.terminal-context-menu .menu-item {
-  padding: 8px 16px;
-  cursor: pointer;
-  user-select: none;
-  transition: background-color 0.1s ease;
+.danger-menu-item {
+  color: #ff4d4f !important;
 }
 
-.terminal-context-menu .menu-item:hover {
-  background-color: #e6f7ff;
+.danger-menu-item:hover {
+  background-color: #fff1f0 !important;
 }
+
 </style>

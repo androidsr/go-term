@@ -122,6 +122,10 @@ export function HandleFileUploadRequest(arg1, arg2, arg3) {
   return window['go']['controllers']['SSHController']['HandleFileUploadRequest'](arg1, arg2, arg3);
 }
 
+export function InterruptCommand(arg1) {
+  return window['go']['controllers']['SSHController']['InterruptCommand'](arg1);
+}
+
 export function IsTerminalSessionActive(arg1) {
   return window['go']['controllers']['SSHController']['IsTerminalSessionActive'](arg1);
 }
