@@ -2,32 +2,23 @@
   <div class="terminal-container">
     <div ref="terminalElement" class="terminal-element" @contextmenu="handleContextMenu"></div>
 
-    <!-- 使用 Ant Design Vue 的 Dropdown 组件 -->
-    <a-dropdown
-      v-model:open="contextMenuVisible"
-      :trigger="[]"
-      placement="bottomLeft"
-    >
-      <div class="context-menu-trigger" :style="contextMenuStyle"></div>
-      <template #overlay>
-        <a-menu @click="handleMenuClick">
-          <a-menu-item key="copy">
-            <CopyOutlined /> 复制
-          </a-menu-item>
-          <a-menu-item key="paste">
-            <ScissorOutlined /> 粘贴
-          </a-menu-item>
-          <a-menu-divider />
-          <a-menu-item key="interrupt" class="danger-menu-item">
-            <StopOutlined /> 中断命令
-          </a-menu-item>
-          <a-menu-divider />
-          <a-menu-item key="clear">
-            <ClearOutlined /> 清空屏幕
-          </a-menu-item>
-        </a-menu>
-      </template>
-    </a-dropdown>
+    <!-- 自定义右键菜单 -->
+    <div v-if="contextMenuVisible" class="custom-context-menu" :style="contextMenuStyle">
+      <div class="menu-item" @click="handleMenuClick({ key: 'copy' })">
+        <CopyOutlined /> 复制
+      </div>
+      <div class="menu-item" @click="handleMenuClick({ key: 'paste' })">
+        <ScissorOutlined /> 粘贴
+      </div>
+      <div class="menu-divider"></div>
+      <div class="menu-item danger-menu-item" @click="handleMenuClick({ key: 'interrupt' })">
+        <StopOutlined /> 中断命令
+      </div>
+      <div class="menu-divider"></div>
+      <div class="menu-item" @click="handleMenuClick({ key: 'clear' })">
+        <ClearOutlined /> 清空屏幕
+      </div>
+    </div>
   </div>
 </template>
 
@@ -305,11 +296,10 @@ export default {
     handleContextMenu(event) {
       event.preventDefault();
 
-      // 设置触发器位置
+      // 设置菜单位置 - 使用 clientX/Y 配合 fixed 定位
       this.contextMenuStyle = {
-        position: 'absolute',
-        left: event.pageX + 'px',
-        top: event.pageY + 'px',
+        left: event.clientX + 'px',
+        top: event.clientY + 'px',
         display: 'block'
       };
 
@@ -525,11 +515,37 @@ export default {
   background: #888;
 }
 
-/* Ant Design 右键菜单样式 */
-.context-menu-trigger {
-  width: 0;
-  height: 0;
-  pointer-events: none;
+/* 自定义右键菜单样式 */
+.custom-context-menu {
+  position: fixed;
+  z-index: 10000;
+  background: #fff;
+  border-radius: 4px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+  min-width: 160px;
+  padding: 4px 0;
+  border: 1px solid #e8e8e8;
+  margin: 0;
+}
+
+.menu-item {
+  padding: 8px 16px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  font-size: 14px;
+  color: rgba(0, 0, 0, 0.85);
+  transition: background-color 0.3s;
+}
+
+.menu-item:hover {
+  background-color: #e6f7ff;
+}
+
+.menu-divider {
+  height: 1px;
+  background-color: #e8e8e8;
+  margin: 4px 0;
 }
 
 .danger-menu-item {
