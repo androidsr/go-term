@@ -130,9 +130,16 @@ func (s *SSHConnection) UploadFile(sftpClient *sftp.Client, localPath, remotePat
 	}
 	defer remoteFile.Close()
 
-	_, err = io.Copy(remoteFile, localFile)
+	// 使用带缓冲的拷贝，提高大文件传输效率
+	buf := make([]byte, 32*1024) // 32KB 缓冲区
+	_, err = io.CopyBuffer(remoteFile, localFile, buf)
 	if err != nil {
 		return fmt.Errorf("文件传输失败: %v", err)
+	}
+
+	// 确保数据刷新到磁盘
+	if err := remoteFile.Sync(); err != nil {
+		return fmt.Errorf("刷新远程文件失败: %v", err)
 	}
 
 	return nil
@@ -156,9 +163,16 @@ func (s *SSHConnection) DownloadFile(sftpClient *sftp.Client, remotePath, localP
 	}
 	defer localFile.Close()
 
-	_, err = io.Copy(localFile, remoteFile)
+	// 使用带缓冲的拷贝，提高大文件传输效率
+	buf := make([]byte, 32*1024) // 32KB 缓冲区
+	_, err = io.CopyBuffer(localFile, remoteFile, buf)
 	if err != nil {
 		return fmt.Errorf("文件传输失败: %v", err)
+	}
+
+	// 确保数据刷新到磁盘
+	if err := localFile.Sync(); err != nil {
+		return fmt.Errorf("刷新本地文件失败: %v", err)
 	}
 
 	return nil

@@ -183,7 +183,6 @@ export default {
       terminalTabs: [],
       closedSessions: new Set(),
       pendingScript: null, // 添加待处理脚本的存储
-      statusRefreshTimer: null, // 连接状态刷新定时器
 
       // 分组模态框
       groupModalVisible: false,
@@ -223,11 +222,6 @@ export default {
     window.addEventListener('file-operation-error', this.handleFileOperationError);
     // 添加对文件操作成功的监听
     window.addEventListener('file-operation-success', this.handleFileOperationSuccess);
-    
-    // 设置定时刷新连接状态（每30秒）
-    this.statusRefreshTimer = setInterval(() => {
-      this.refreshConnectionStatus();
-    }, 30000);
   },
 
   beforeUnmount() {
@@ -237,11 +231,6 @@ export default {
     window.removeEventListener('file-operation-error', this.handleFileOperationError);
     // 移除文件操作成功监听
     window.removeEventListener('file-operation-success', this.handleFileOperationSuccess);
-    
-    // 清理定时器
-    if (this.statusRefreshTimer) {
-      clearInterval(this.statusRefreshTimer);
-    }
   },
 
   methods: {
@@ -249,44 +238,20 @@ export default {
       try {
         // 获取服务器分组
         this.groups = await GetServerGroups();
-        
-        // 获取连接状态
+
+        // 获取连接状态（只在加载时检查一次）
         const connectionStatus = await GetServerConnectionStatus();
-        
+
         // 为每个服务器设置连接状态
         this.groups.forEach(group => {
           group.servers.forEach(server => {
             server.connected = connectionStatus[server.id] || false;
           });
         });
-        
+
         this.closedSessions.clear();
       } catch (error) {
         console.error('加载服务器分组失败:', error);
-      }
-    },
-
-    async refreshConnectionStatus() {
-      try {
-        // 只更新连接状态，不重新加载整个数据
-        const connectionStatus = await GetServerConnectionStatus();
-        
-        // 更新所有分组的连接状态
-        this.groups.forEach(group => {
-          group.servers.forEach(server => {
-            // 更新服务器状态
-            server.connected = connectionStatus[server.id] || false;
-          });
-        });
-        
-        // 更新当前分组的服务器状态
-        this.currentServers.forEach(server => {
-          server.connected = connectionStatus[server.id] || false;
-        });
-        
-        console.log('连接状态已更新');
-      } catch (error) {
-        console.error('刷新连接状态失败:', error);
       }
     },
 
@@ -480,9 +445,10 @@ export default {
           this.$message.success(result);
         }
         server.loading = false;
-        
-        // 操作后立即刷新连接状态
-        await this.refreshConnectionStatus();
+
+        // 操作后立即更新连接状态（使用后端返回的实际状态）
+        const connectionStatus = await GetServerConnectionStatus();
+        server.connected = connectionStatus[server.id] || false;
       } catch (error) {
         server.loading = false;
         console.error('连接/断开服务器失败:', error);
