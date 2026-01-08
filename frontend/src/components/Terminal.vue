@@ -87,7 +87,7 @@ export default {
 
   beforeUnmount() {
     window.removeEventListener('resize', this.onResize)
-    clearInterval(this.outputTimer)
+    clearTimeout(this.outputTimer)
 
     // 移除事件监听
     window.removeEventListener('send-command-to-terminal', this.handleSendCommand);
@@ -127,13 +127,28 @@ export default {
     async initTerminal() {
       try {
         this.terminal = new Terminal({
-          cursorBlink: true,
-          theme: { background: '#1e1e1e' },
+          cursorBlink: false,  // 关闭光标闪烁,减少重绘
+          cursorStyle: 'block',  // 使用块状光标,更清晰
+          cursorWidth: 1,
+          theme: {
+            background: '#1e1e1e',
+            foreground: '#ffffff',
+            selection: 'rgba(65, 105, 225, 0.3)',  // 蓝色半透明背景
+            selectionForeground: '#ffffff'  // 选中文字保持白色
+          },
           fontSize: 14,
           fontFamily: 'Consolas, Monaco, "Courier New", monospace',
-          // 限制缓冲区大小，防止 tail -f 等命令导致页面卡死
-          bufferSize: 500,  // 最大保存500行历史记录，减少内存占用
-          scrollback: 500    // 滚动缓冲区也设为500行
+          // 性能优化配置
+          bufferSize: 1000,  // 降低到合理范围,减少DOM节点数量
+          scrollback: 1000,
+          allowProposedApi: true,
+          fastScrollModifier: 'alt',
+          fastScrollSensitivity: 5,
+          rendererType: 'canvas',  // 改回Canvas,光标响应更快
+          scrollSensitivity: 1,
+          convertEol: true,
+          bellStyle: 'none',  // 禁用铃声,减少干扰
+          rightClickSelectsWord: false  // 禁用右键选词
         })
 
         this.fitAddon = new FitAddon()
@@ -236,12 +251,33 @@ export default {
     /* ========== 输出读取 ========== */
 
     startReadOutput() {
+      let writeBuffer = []
+      let writeTimer = null
+      const WRITE_DELAY = 8  // 降低到8ms,更快的响应
+
+      const flushWriteBuffer = () => {
+        if (writeBuffer.length > 0) {
+          // 批量写入所有累积的输出
+          const combined = writeBuffer.join('')
+          this.terminal.write(combined)
+          writeBuffer = []
+        }
+        writeTimer = null
+      }
+
+      const scheduleWrite = () => {
+        if (writeTimer) return
+        writeTimer = setTimeout(flushWriteBuffer, WRITE_DELAY)
+      }
+
       const adjustPolling = () => {
         // 动态调整轮询间隔
-        if (this.consecutiveEmpty > 20) { // 1秒无输出
-          this.currentInterval = Math.min(200, this.currentInterval * 1.2) // 逐渐增加到最大200ms
-        } else if (this.consecutiveEmpty === 0) { // 有新输出
-          this.currentInterval = 50 // 恢复高频率
+        if (this.consecutiveEmpty > 30) {
+          this.currentInterval = Math.min(300, this.currentInterval * 1.5)
+        } else if (this.consecutiveEmpty > 10) {
+          this.currentInterval = Math.min(100, this.currentInterval * 1.2)
+        } else if (this.consecutiveEmpty === 0) {
+          this.currentInterval = 50  // 降低到50ms,更快的响应
         }
       }
 
@@ -249,29 +285,20 @@ export default {
         const out = await ReadTerminalOutput(this.serverId)
         if (out) {
           this.consecutiveEmpty = 0
-          this.terminal.write(out)
-
-          // 优化缓冲区检查 - 每秒检查一次而不是每次轮询
-          const now = Date.now()
-          if (now - this.lastBufferCheck > 1000) {
-            this.lastBufferCheck = now
-            const buffer = this.terminal.buffer.active
-            if (buffer.length > 400) {
-              this.terminal.scrollToBottom()
-            }
-          }
+          writeBuffer.push(out)  // 使用数组累积,避免频繁字符串拼接
+          scheduleWrite()
         } else {
           this.consecutiveEmpty++
+          if (writeBuffer.length > 0) {
+            flushWriteBuffer()
+          }
         }
 
         adjustPolling()
-
-        // 重新设置定时器以使用新间隔
-        clearInterval(this.outputTimer)
-        this.outputTimer = setInterval(pollOutput, this.currentInterval)
+        this.outputTimer = setTimeout(pollOutput, this.currentInterval)
       }
 
-      this.outputTimer = setInterval(pollOutput, this.currentInterval)
+      this.outputTimer = setTimeout(pollOutput, this.currentInterval)
     },
 
     onResize() {
@@ -480,11 +507,16 @@ export default {
   background-color: #1e1e1e !important;
   border-radius: 0 !important;
   margin: 0 !important;
+  /* 优化Canvas渲染性能 */
+  image-rendering: pixelated;
 }
 
 .terminal-element :deep(.xterm-viewport) {
   background-color: #1e1e1e !important;
   scrollbar-color: #666 #1e1e1e;
+  /* 启用GPU加速 */
+  transform: translateZ(0);
+  will-change: scroll-position;
 }
 
 .terminal-element :deep(.xterm-screen) {
@@ -495,6 +527,23 @@ export default {
 
 .terminal-element :deep(.xterm-helper-textarea) {
   background-color: #1e1e1e !important;
+}
+
+/* 选中文字样式优化 */
+.terminal-element :deep(.xterm-selection) {
+  background: rgba(65, 105, 225, 0.4) !important;
+  color: #ffffff !important;
+}
+
+/* Canvas层优化 */
+.terminal-element :deep(.xterm-text-layer) {
+  /* 确保文字层清晰 */
+  text-rendering: optimizeLegibility;
+}
+
+.terminal-element :deep(.xterm-cursor-layer) {
+  /* 光标层优先级 */
+  z-index: 10;
 }
 
 /* 滚动条样式优化 */
@@ -553,7 +602,7 @@ export default {
 }
 
 .danger-menu-item:hover {
-  background-color: #fff1f0 !important;
+  background-color: #fff1f0  !important;
 }
 
 </style>
