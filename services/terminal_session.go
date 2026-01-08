@@ -28,6 +28,11 @@ type TerminalSession struct {
 
 	width  int
 	height int
+
+	// 事件推送相关字段
+	serverID       string
+	eventEmitFunc  func(event string, data ...interface{})
+	outputPushDone chan struct{}
 }
 
 func (s *SSHConnection) CreateTerminalSession(width, height int) (*TerminalSession, error) {
@@ -61,15 +66,16 @@ func (s *SSHConnection) CreateTerminalSession(width, height int) (*TerminalSessi
 	}
 
 	ts := &TerminalSession{
-		Session:    session,
-		Stdin:      stdin,
-		stdout:     stdout,
-		stderr:     stderr,
-		OutputChan: make(chan []byte, 200), // 适中的缓冲区大小，平衡内存和性能
-		ErrorChan:  make(chan []byte, 100),
-		closeChan:  make(chan struct{}),
-		width:      width,
-		height:     height,
+		Session:       session,
+		Stdin:         stdin,
+		stdout:        stdout,
+		stderr:        stderr,
+		OutputChan:    make(chan []byte, 200), // 适中的缓冲区大小，平衡内存和性能
+		ErrorChan:     make(chan []byte, 100),
+		closeChan:     make(chan struct{}),
+		width:         width,
+		height:        height,
+		outputPushDone: make(chan struct{}),
 	}
 
 	// 启动后台读协程
@@ -152,6 +158,80 @@ func (ts *TerminalSession) ClearOutputBuffer() {
 	ts.bufferMutex.Lock()
 	defer ts.bufferMutex.Unlock()
 	ts.outputBuffer = []byte{}
+}
+
+// SetEventEmitter 设置事件推送函数和serverID
+func (ts *TerminalSession) SetEventEmitter(serverID string, emitFunc func(event string, data ...interface{})) {
+	ts.serverID = serverID
+	ts.eventEmitFunc = emitFunc
+}
+
+// StartOutputPusher 启动输出推送协程
+func (ts *TerminalSession) StartOutputPusher() {
+	if ts.outputPushDone == nil {
+		ts.outputPushDone = make(chan struct{})
+	}
+
+	go func() {
+		defer close(ts.outputPushDone)
+
+		writeBuffer := make([][]byte, 0, 10)
+		var flushTimer *time.Timer
+		flushTimer = time.NewTimer(8 * time.Millisecond)
+		defer flushTimer.Stop()
+
+		flushBuffer := func() {
+			if len(writeBuffer) > 0 && ts.eventEmitFunc != nil {
+				// 合并所有数据块
+				totalLen := 0
+				for _, chunk := range writeBuffer {
+					totalLen += len(chunk)
+				}
+				combined := make([]byte, 0, totalLen)
+				for _, chunk := range writeBuffer {
+					combined = append(combined, chunk...)
+				}
+
+				// 使用事件推送数据
+				ts.eventEmitFunc("terminal-output:"+ts.serverID, string(combined))
+				writeBuffer = writeBuffer[:0] // 清空缓冲区
+			}
+			// 重置定时器
+			if !flushTimer.Stop() {
+				select {
+				case <-flushTimer.C:
+				default:
+				}
+			}
+			flushTimer.Reset(8 * time.Millisecond)
+		}
+
+		for {
+			select {
+			case <-ts.closeChan:
+				// 退出前刷新缓冲区
+				flushBuffer()
+				return
+			case data, ok := <-ts.OutputChan:
+				if !ok {
+					// 通道已关闭,退出前刷新缓冲区
+					flushBuffer()
+					return
+				}
+
+				// 将数据写入缓冲区
+				writeBuffer = append(writeBuffer, data)
+
+				// 如果缓冲区达到一定大小,立即刷新
+				if len(writeBuffer) >= 5 {
+					flushBuffer()
+				}
+			case <-flushTimer.C:
+				// 定时器到期,刷新缓冲区
+				flushBuffer()
+			}
+		}
+	}()
 }
 
 // ParseAutoCompleteSuggestions 解析自动补全建议列表
@@ -368,6 +448,16 @@ func (ts *TerminalSession) Close() error {
 	ts.closeOnce.Do(func() {
 		// 先关闭channel，通知readLoop退出
 		close(ts.closeChan)
+
+		// 等待输出推送协程退出
+		if ts.outputPushDone != nil {
+			select {
+			case <-ts.outputPushDone:
+				// 协程已正常退出
+			case <-time.After(500 * time.Millisecond):
+				// 超时后继续
+			}
+		}
 
 		// 设置一个超时上下文确保不会无限等待
 		ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)

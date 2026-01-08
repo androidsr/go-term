@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/pkg/sftp"
+	"github.com/wailsapp/wails/v2/pkg/runtime"
 
 	"go-term/models"
 	"go-term/services"
@@ -496,7 +497,13 @@ func (sc *SSHController) CreateTerminalSession(serverID string) (string, error) 
 	}
 	sc.terminalSessions[serverID] = terminalSession
 	sc.mutex.Unlock()
-	
+
+	// 设置事件推送函数并启动推送协程
+	terminalSession.SetEventEmitter(serverID, func(event string, data ...interface{}) {
+		runtime.EventsEmit(sc.ctx, event, data...)
+	})
+	terminalSession.StartOutputPusher()
+
 	return "终端会话创建成功", nil
 }
 
@@ -549,6 +556,12 @@ func (sc *SSHController) CreateTerminalSessionWithSize(serverID string, width, h
 	}
 	sc.terminalSessions[serverID] = terminalSession
 	sc.mutex.Unlock()
+
+	// 设置事件推送函数并启动推送协程
+	terminalSession.SetEventEmitter(serverID, func(event string, data ...interface{}) {
+		runtime.EventsEmit(sc.ctx, event, data...)
+	})
+	terminalSession.StartOutputPusher()
 
 	return "终端会话创建成功", nil
 }

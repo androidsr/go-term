@@ -31,12 +31,12 @@ import {
   CreateTerminalSessionWithSize,
   ExecuteCommandWithoutNewline,
   InterruptCommand,
-  ReadTerminalOutput,
   ResizeTerminal,
   CloseTerminalSession,
   HandleFileUploadRequest,  // 添加导入
   HandleFileDownloadRequest  // 添加导入
 } from '../../wailsjs/go/controllers/SSHController'
+import { EventsOn, EventsOff } from '../../wailsjs/runtime/runtime'
 import { CopyOutlined, ScissorOutlined, StopOutlined, ClearOutlined } from '@ant-design/icons-vue'
 
 export default {
@@ -56,11 +56,9 @@ export default {
     return {
       terminal: null,
       fitAddon: null,
-      outputTimer: null,
       sessionClosed: false, // 添加标志避免重复关闭
-      consecutiveEmpty: 0,   // 连续空输出计数
-      currentInterval: 50,  // 当前轮询间隔
-      lastBufferCheck: 0,   // 上次缓冲区检查时间
+      writeTimer: null,
+      writeBuffer: [],
       contextMenuVisible: false,
       contextMenuStyle: {
         position: 'absolute',
@@ -72,7 +70,7 @@ export default {
   async mounted() {
     await this.initTerminal()
     window.addEventListener('resize', this.onResize)
-    this.startReadOutput()
+    this.setupOutputListener()
 
     // 通知父组件终端已准备就绪
     this.$emit('terminal-ready', this.serverId);
@@ -87,12 +85,20 @@ export default {
 
   beforeUnmount() {
     window.removeEventListener('resize', this.onResize)
-    clearTimeout(this.outputTimer)
 
     // 移除事件监听
     window.removeEventListener('send-command-to-terminal', this.handleSendCommand);
     window.removeEventListener('file-upload-request', this.handleFileUpload);
     window.removeEventListener('file-download-request', this.handleFileDownload);
+
+    // 移除终端输出事件监听
+    EventsOff(`terminal-output:${this.serverId}`);
+
+    // 清理写入定时器
+    if (this.writeTimer) {
+      clearTimeout(this.writeTimer)
+      this.writeTimer = null
+    }
 
     // 清理终端实例，但只有在已加载且未被dispose的情况下才销毁
     if (this.terminal && typeof this.terminal.dispose === 'function') {
@@ -250,55 +256,31 @@ export default {
 
     /* ========== 输出读取 ========== */
 
-    startReadOutput() {
-      let writeBuffer = []
-      let writeTimer = null
-      const WRITE_DELAY = 8  // 降低到8ms,更快的响应
+    setupOutputListener() {
+      const WRITE_DELAY = 8  // 批量写入延迟8ms
 
       const flushWriteBuffer = () => {
-        if (writeBuffer.length > 0) {
+        if (this.writeBuffer.length > 0 && this.terminal) {
           // 批量写入所有累积的输出
-          const combined = writeBuffer.join('')
+          const combined = this.writeBuffer.join('')
           this.terminal.write(combined)
-          writeBuffer = []
+          this.writeBuffer = []
         }
-        writeTimer = null
+        this.writeTimer = null
       }
 
       const scheduleWrite = () => {
-        if (writeTimer) return
-        writeTimer = setTimeout(flushWriteBuffer, WRITE_DELAY)
+        if (this.writeTimer || !this.terminal) return
+        this.writeTimer = setTimeout(flushWriteBuffer, WRITE_DELAY)
       }
 
-      const adjustPolling = () => {
-        // 动态调整轮询间隔
-        if (this.consecutiveEmpty > 30) {
-          this.currentInterval = Math.min(300, this.currentInterval * 1.5)
-        } else if (this.consecutiveEmpty > 10) {
-          this.currentInterval = Math.min(100, this.currentInterval * 1.2)
-        } else if (this.consecutiveEmpty === 0) {
-          this.currentInterval = 50  // 降低到50ms,更快的响应
-        }
-      }
-
-      const pollOutput = async () => {
-        const out = await ReadTerminalOutput(this.serverId)
-        if (out) {
-          this.consecutiveEmpty = 0
-          writeBuffer.push(out)  // 使用数组累积,避免频繁字符串拼接
+      // 监听后端推送的输出事件
+      EventsOn(`terminal-output:${this.serverId}`, (output) => {
+        if (this.terminal && output) {
+          this.writeBuffer.push(output)
           scheduleWrite()
-        } else {
-          this.consecutiveEmpty++
-          if (writeBuffer.length > 0) {
-            flushWriteBuffer()
-          }
         }
-
-        adjustPolling()
-        this.outputTimer = setTimeout(pollOutput, this.currentInterval)
-      }
-
-      this.outputTimer = setTimeout(pollOutput, this.currentInterval)
+      })
     },
 
     onResize() {
@@ -362,7 +344,7 @@ export default {
     },
 
     // 关闭菜单方法
-    closeContextMenu(e) {
+    closeContextMenu() {
       this.contextMenuVisible = false;
     },
 
