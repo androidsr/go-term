@@ -74,6 +74,14 @@ export function ExecCommand(arg1, arg2) {
   return window['go']['controllers']['SSHController']['ExecCommand'](arg1, arg2);
 }
 
+export function ExecCommandDirect(arg1, arg2) {
+  return window['go']['controllers']['SSHController']['ExecCommandDirect'](arg1, arg2);
+}
+
+export function ExecCommandsInSharedSession(arg1, arg2) {
+  return window['go']['controllers']['SSHController']['ExecCommandsInSharedSession'](arg1, arg2);
+}
+
 export function ExecDownloadFile(arg1, arg2, arg3) {
   return window['go']['controllers']['SSHController']['ExecDownloadFile'](arg1, arg2, arg3);
 }

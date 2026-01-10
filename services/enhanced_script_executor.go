@@ -79,8 +79,8 @@ func (ese *EnhancedScriptExecutor) ExecuteScriptMode(
 		StartTime: now,
 	}
 
-	// 执行处理后的脚本内容
-	output, err := executor.ExecCommand(serverID, processedScript)
+	// 执行处理后的脚本内容（使用直接执行，不通过终端会话）
+	output, err := executor.ExecCommandDirect(serverID, processedScript)
 	cmdOutput.EndTime = time.Now().Format("2006-01-02 15:04:05")
 	cmdOutput.Output = output
 
@@ -293,7 +293,20 @@ func (ese *EnhancedScriptExecutor) ExecuteCommandMode(
 	var commandOutputs []models.CommandOutput
 	now := time.Now().Format("2006-01-02 15:04:05")
 
-	for i, parsedCmd := range commands {
+	// 将命令分为两类：文件操作命令和shell命令
+	var fileOps []ParsedCommand
+	var shellCommands []string
+
+	for _, parsedCmd := range commands {
+		if parsedCmd.CommandType == "upload" || parsedCmd.CommandType == "download" {
+			fileOps = append(fileOps, parsedCmd)
+		} else if parsedCmd.CommandType == "shell" {
+			shellCommands = append(shellCommands, parsedCmd.Command)
+		}
+	}
+
+	// 先执行文件操作命令
+	for _, parsedCmd := range fileOps {
 		cmdOutput := models.CommandOutput{
 			Command:   parsedCmd.Command,
 			Status:    "running",
@@ -303,15 +316,10 @@ func (ese *EnhancedScriptExecutor) ExecuteCommandMode(
 		var err error
 		var output string
 
-		// 根据命令类型执行不同的操作
-		switch parsedCmd.CommandType {
-		case "upload":
+		if parsedCmd.CommandType == "upload" {
 			output, err = ese.handleUploadCommand(executor, serverID, parsedCmd.Command)
-		case "download":
+		} else if parsedCmd.CommandType == "download" {
 			output, err = ese.handleDownloadCommand(executor, serverID, parsedCmd.Command)
-		default:
-			// 执行普通shell命令
-			output, err = executor.ExecCommand(serverID, parsedCmd.Command)
 		}
 
 		cmdOutput.EndTime = time.Now().Format("2006-01-02 15:04:05")
@@ -319,7 +327,6 @@ func (ese *EnhancedScriptExecutor) ExecuteCommandMode(
 
 		if err != nil {
 			cmdOutput.Status = "failed"
-			// 清理错误信息，避免重复包装
 			errorMsg := err.Error()
 			if strings.Contains(errorMsg, "执行命令失败:") {
 				parts := strings.SplitN(errorMsg, ":", 3)
@@ -327,29 +334,62 @@ func (ese *EnhancedScriptExecutor) ExecuteCommandMode(
 					errorMsg = strings.TrimSpace(parts[2])
 				}
 			}
-
-			// 根据命令类型设置不同的错误信息
-			switch parsedCmd.CommandType {
-			case "upload":
-				cmdOutput.Error = fmt.Sprintf("第%d行文件上传失败: %s", i+1, errorMsg)
-			case "download":
-				cmdOutput.Error = fmt.Sprintf("第%d行文件下载失败: %s", i+1, errorMsg)
-			default:
-				cmdOutput.Error = fmt.Sprintf("第%d行命令失败: %s", i+1, errorMsg)
+			if parsedCmd.CommandType == "upload" {
+				cmdOutput.Error = fmt.Sprintf("文件上传失败: %s", errorMsg)
+			} else {
+				cmdOutput.Error = fmt.Sprintf("文件下载失败: %s", errorMsg)
 			}
-
-			// 确保输出字段包含错误信息，这样前端能显示
 			if output == "" {
 				cmdOutput.Output = cmdOutput.Error
-			} else {
-				cmdOutput.Output += "\n错误信息: " + cmdOutput.Error
 			}
-			// 添加命令到结果列表，确保失败状态被记录
 			commandOutputs = append(commandOutputs, cmdOutput)
-			// 命令模式下，遇到失败命令就停止执行
-			break
+			return commandOutputs, fmt.Errorf("文件操作失败")
 		} else {
 			cmdOutput.Status = "success"
+			commandOutputs = append(commandOutputs, cmdOutput)
+		}
+	}
+
+	// 然后在一个共享的session中执行所有shell命令
+	if len(shellCommands) > 0 {
+		outputs, err := executor.ExecCommandsInSharedSession(serverID, shellCommands)
+		if err != nil {
+			// 失败时，为所有shell命令添加失败记录
+			for _, cmd := range shellCommands {
+				cmdOutput := models.CommandOutput{
+					Command:   cmd,
+					Status:    "failed",
+					StartTime: now,
+					EndTime:   time.Now().Format("2006-01-02 15:04:05"),
+				}
+				cmdOutput.Error = err.Error()
+				if len(outputs) > 0 {
+					cmdOutput.Output = outputs[0]
+				} else {
+					cmdOutput.Output = cmdOutput.Error
+				}
+				commandOutputs = append(commandOutputs, cmdOutput)
+			}
+			return commandOutputs, err
+		}
+
+		// 成功时，为每个shell命令添加成功记录
+		// 注意：由于所有命令在同一个session中执行，我们只有一个输出
+		// 这里简化处理，将同一个输出分配给所有命令
+		for i, cmd := range shellCommands {
+			cmdOutput := models.CommandOutput{
+				Command:   cmd,
+				Status:    "success",
+				StartTime: now,
+				EndTime:   time.Now().Format("2006-01-02 15:04:05"),
+			}
+			if len(outputs) > i {
+				cmdOutput.Output = outputs[i]
+			} else if len(outputs) > 0 {
+				cmdOutput.Output = outputs[0]
+			} else {
+				cmdOutput.Output = "命令执行完成，无输出"
+			}
 			commandOutputs = append(commandOutputs, cmdOutput)
 		}
 	}
@@ -372,4 +412,6 @@ type CommandExecutor interface {
 	ExecUploadFile(serverID, localPath, remotePath string) (string, error)
 	ExecDownloadFile(serverID, remotePath, localPath string) (string, error)
 	EnsureSFTPClient(serverID string) error // 确保SFTP客户端已创建
+	ExecCommandDirect(serverID, command string) (string, error) // 直接执行命令（不通过终端会话）
+	ExecCommandsInSharedSession(serverID string, commands []string) ([]string, error) // 在同一个session中执行多个命令
 }

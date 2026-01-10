@@ -5,6 +5,7 @@ import (
 	"io"
 	"io/ioutil"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/pkg/sftp"
@@ -85,6 +86,33 @@ func (s *SSHConnection) ExecuteCommand(command string) (string, error) {
 	return string(output), nil
 }
 
+// ExecuteCommandsWithSharedSession 在同一个 shell session 中执行多个命令
+// 这样可以共享工作目录、环境变量等
+func (s *SSHConnection) ExecuteCommandsWithSharedSession(commands []string) ([]string, error) {
+	if s.Client == nil {
+		return nil, fmt.Errorf("SSH连接未建立")
+	}
+
+	session, err := s.Client.NewSession()
+	if err != nil {
+		return nil, fmt.Errorf("无法创建会话: %v", err)
+	}
+	defer session.Close()
+
+	// 将多个命令组合成一个 shell 脚本，用 && 连接
+	// 这样它们会在同一个 shell session 中执行，共享工作目录和环境变量
+	// 使用分号连接，这样即使前面的命令失败，后面的命令也会执行
+	script := strings.Join(commands, "; ")
+
+	output, err := session.CombinedOutput(script)
+	if err != nil {
+		// 将完整输出作为第一个元素返回，这样即使失败也能看到输出
+		return []string{string(output)}, fmt.Errorf("执行命令失败: %v", err)
+	}
+
+	return []string{string(output)}, nil
+}
+
 // Close 关闭SSH连接
 func (s *SSHConnection) Close() {
 	if s.Client != nil {
@@ -138,9 +166,8 @@ func (s *SSHConnection) UploadFile(sftpClient *sftp.Client, localPath, remotePat
 	}
 
 	// 确保数据刷新到磁盘
-	if err := remoteFile.Sync(); err != nil {
-		return fmt.Errorf("刷新远程文件失败: %v", err)
-	}
+	// 注意：很多 SFTP 服务器不支持 fsync 操作，因此我们只尝试刷新但不强求
+	_ = remoteFile.Sync()
 
 	return nil
 }

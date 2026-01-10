@@ -40,6 +40,10 @@ export function EnsureSFTPClient(arg1:string):Promise<void>;
 
 export function ExecCommand(arg1:string,arg2:string):Promise<string>;
 
+export function ExecCommandDirect(arg1:string,arg2:string):Promise<string>;
+
+export function ExecCommandsInSharedSession(arg1:string,arg2:Array<string>):Promise<Array<string>>;
+
 export function ExecDownloadFile(arg1:string,arg2:string,arg3:string):Promise<string>;
 
 export function ExecUploadFile(arg1:string,arg2:string,arg3:string):Promise<string>;

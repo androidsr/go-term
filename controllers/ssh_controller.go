@@ -1256,6 +1256,44 @@ func (sc *SSHController) ExecCommand(serverID, command string) (string, error) {
 	return sc.ExecuteCommand(serverID, command)
 }
 
+func (sc *SSHController) ExecCommandDirect(serverID, command string) (string, error) {
+	// 直接通过 SSHConnection 执行，不检查终端会话
+	sc.mutex.RLock()
+	conn, exists := sc.connections[serverID]
+	sc.mutex.RUnlock()
+
+	if !exists || conn.Client == nil {
+		return "", fmt.Errorf("服务器未连接，请先连接服务器")
+	}
+
+	result, err := conn.ExecuteCommand(command)
+	if err != nil {
+		// 如果有输出结果，说明命令执行了但有错误，返回完整的错误信息
+		if result != "" {
+			return result, fmt.Errorf("执行命令失败: %v\n输出: %s", err, result)
+		}
+		return "", fmt.Errorf("执行命令失败: %v", err)
+	}
+	return result, nil
+}
+
+func (sc *SSHController) ExecCommandsInSharedSession(serverID string, commands []string) ([]string, error) {
+	// 直接通过 SSHConnection 执行，不检查终端会话
+	sc.mutex.RLock()
+	conn, exists := sc.connections[serverID]
+	sc.mutex.RUnlock()
+
+	if !exists || conn.Client == nil {
+		return nil, fmt.Errorf("服务器未连接，请先连接服务器")
+	}
+
+	result, err := conn.ExecuteCommandsWithSharedSession(commands)
+	if err != nil {
+		return result, err
+	}
+	return result, nil
+}
+
 func (sc *SSHController) ExecUploadFile(serverID, localPath, remotePath string) (string, error) {
 	return sc.UploadFile(serverID, localPath, remotePath)
 }
