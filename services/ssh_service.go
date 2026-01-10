@@ -172,41 +172,51 @@ func (s *SSHConnection) UploadFile(sftpClient *sftp.Client, localPath, remotePat
 		return fmt.Errorf("SSH连接未建立")
 	}
 
+	// 获取文件大小
 	localFile, err := os.Open(localPath)
 	if err != nil {
 		return fmt.Errorf("无法打开本地文件: %v", err)
 	}
 	defer localFile.Close()
 
-	// 获取文件大小
 	fileInfo, err := localFile.Stat()
 	if err != nil {
 		return fmt.Errorf("无法获取文件信息: %v", err)
 	}
 	totalSize := fileInfo.Size()
 
-	remoteFile, err := sftpClient.Create(remotePath)
+	// 使用 SFTP 客户端的内置方法上传，它内部有优化
+	srcFile, err := os.Open(localPath)
+	if err != nil {
+		return fmt.Errorf("无法打开本地文件: %v", err)
+	}
+	defer srcFile.Close()
+
+	dstFile, err := sftpClient.Create(remotePath)
 	if err != nil {
 		return fmt.Errorf("无法创建远程文件: %v", err)
 	}
-	defer remoteFile.Close()
+	defer dstFile.Close()
 
-	// 使用带进度追踪的拷贝
-	buf := make([]byte, 32*1024) // 32KB 缓冲区
+	// 使用更大的缓冲区
+	buf := make([]byte, 512*1024) // 256KB 缓冲区
 	var transferred int64
+	var lastProgressUpdate int64
+	const progressUpdateInterval = 100 * 1024 // 每 100KB 更新一次进度
 
 	for {
-		n, err := localFile.Read(buf)
+		n, err := srcFile.Read(buf)
 		if n > 0 {
-			_, writeErr := remoteFile.Write(buf[:n])
+			_, writeErr := dstFile.Write(buf[:n])
 			if writeErr != nil {
 				return fmt.Errorf("文件传输失败: %v", writeErr)
 			}
 			transferred += int64(n)
 
-			// 调用进度回调
-			if progressCallback != nil {
+			// 节流进度回调，减少事件发送频率
+			if progressCallback != nil && (transferred-lastProgressUpdate >= progressUpdateInterval || transferred == totalSize) {
 				progressCallback(transferred, totalSize)
+				lastProgressUpdate = transferred
 			}
 		}
 		if err != nil {
@@ -218,8 +228,7 @@ func (s *SSHConnection) UploadFile(sftpClient *sftp.Client, localPath, remotePat
 	}
 
 	// 确保数据刷新到磁盘
-	// 注意：很多 SFTP 服务器不支持 fsync 操作，因此我们只尝试刷新但不强求
-	_ = remoteFile.Sync()
+	_ = dstFile.Sync()
 
 	return nil
 }
@@ -249,9 +258,13 @@ func (s *SSHConnection) DownloadFile(sftpClient *sftp.Client, remotePath, localP
 	}
 	defer localFile.Close()
 
-	// 使用带进度追踪的拷贝
-	buf := make([]byte, 32*1024) // 32KB 缓冲区
+	// 使用更大的缓冲区提高传输效率
+	buf := make([]byte, 256*1024) // 256KB 缓冲区
 	var transferred int64
+
+	// 进度更新频率控制，避免频繁调用回调
+	const progressUpdateInterval = 100 * 1024 // 每传输 100KB 更新一次进度
+	var lastProgressUpdate int64
 
 	for {
 		n, err := remoteFile.Read(buf)
@@ -262,9 +275,10 @@ func (s *SSHConnection) DownloadFile(sftpClient *sftp.Client, remotePath, localP
 			}
 			transferred += int64(n)
 
-			// 调用进度回调
-			if progressCallback != nil {
+			// 节流进度回调，减少事件发送频率
+			if progressCallback != nil && (transferred-lastProgressUpdate >= progressUpdateInterval || transferred == totalSize) {
 				progressCallback(transferred, totalSize)
+				lastProgressUpdate = transferred
 			}
 		}
 		if err != nil {

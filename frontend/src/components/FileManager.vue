@@ -170,8 +170,7 @@ export default {
       },
       // 用于追踪速度计算
       progressStartTime: null,
-      lastTransferred: 0,
-      progressTimer: null,
+      lastSpeedUpdate: 0,
       uploading: false,
       downloading: false
     };
@@ -202,14 +201,19 @@ export default {
         const percent = Math.floor(data.percent);
         this.progressPercent = percent;
         this.progressInfo.transferred = this.formatFileSize(data.transferred);
-        this.progressInfo.total = this.formatFileSize(data.total);
+        // 只在第一次更新 total，避免重复计算
+        if (!this.progressInfo.total || data.total > 0) {
+          this.progressInfo.total = this.formatFileSize(data.total);
+        }
 
-        // 计算速度
-        if (this.progressStartTime) {
-          const elapsed = (Date.now() - this.progressStartTime) / 1000;
+        // 节流速度计算，每 500ms 更新一次
+        const now = Date.now();
+        if (this.progressStartTime && (now - this.lastSpeedUpdate > 500 || data.percent === 100)) {
+          const elapsed = (now - this.progressStartTime) / 1000;
           if (elapsed > 0) {
             const speed = Math.floor(data.transferred / elapsed);
             this.progressInfo.speed = this.formatFileSize(speed) + '/s';
+            this.lastSpeedUpdate = now;
           }
         }
       });
@@ -219,14 +223,19 @@ export default {
         const percent = Math.floor(data.percent);
         this.progressPercent = percent;
         this.progressInfo.transferred = this.formatFileSize(data.transferred);
-        this.progressInfo.total = this.formatFileSize(data.total);
+        // 只在第一次更新 total，避免重复计算
+        if (!this.progressInfo.total || data.total > 0) {
+          this.progressInfo.total = this.formatFileSize(data.total);
+        }
 
-        // 计算速度
-        if (this.progressStartTime) {
-          const elapsed = (Date.now() - this.progressStartTime) / 1000;
+        // 节流速度计算，每 500ms 更新一次
+        const now = Date.now();
+        if (this.progressStartTime && (now - this.lastSpeedUpdate > 500 || data.percent === 100)) {
+          const elapsed = (now - this.progressStartTime) / 1000;
           if (elapsed > 0) {
             const speed = Math.floor(data.transferred / elapsed);
             this.progressInfo.speed = this.formatFileSize(speed) + '/s';
+            this.lastSpeedUpdate = now;
           }
         }
       });
