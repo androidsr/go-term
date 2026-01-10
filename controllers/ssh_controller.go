@@ -1096,6 +1096,7 @@ func (sc *SSHController) ExecuteBatchScript(scriptID string) (map[string]models.
 }
 
 // SendScriptToTerminal 逐行发送脚本命令到终端（用于命令模式）
+// wails:export
 func (sc *SSHController) SendScriptToTerminal(scriptID string, serverID string) error {
 	// 获取脚本
 	script, err := sc.scriptManager.GetScriptByID(scriptID)
@@ -1235,8 +1236,8 @@ func (sc *SSHController) SendScriptToTerminal(scriptID string, serverID string) 
 
 		// 处理shell类型的命令，发送到终端
 		if parsedCmd.CommandType == "shell" {
-			// 发送命令到终端（不带换行符，让前端控制何时发送）
-			_, err = sc.ExecuteCommandWithoutNewline(serverID, parsedCmd.Command)
+			// 发送命令到终端（带换行符，让命令执行）
+			_, err = sc.ExecuteCommand(serverID, parsedCmd.Command)
 			if err != nil {
 				// 记录错误但继续执行下一个命令
 				fmt.Printf("发送命令到终端失败: %v\n", err)
@@ -1265,20 +1266,6 @@ func (sc *SSHController) ExecDownloadFile(serverID, remotePath, localPath string
 
 // HandleFileUploadRequest 处理文件上传请求
 func (sc *SSHController) HandleFileUploadRequest(serverID, localPath, remotePath string) error {
-	// 检查终端会话状态
-	sc.mutex.RLock()
-	_, sessionExists := sc.terminalSessions[serverID]
-	sc.mutex.RUnlock()
-
-	if sessionExists {
-		// 如果终端会话存在，发送提示到终端
-		// 暂停终端输入，避免冲突
-		session, _ := sc.terminalSessions[serverID]
-		if session != nil {
-			session.SendCommandWithoutNewline("\r\n[INFO] 正在上传文件，请等待...\r\n")
-		}
-	}
-
 	// 确保SFTP客户端已创建
 	err := sc.EnsureSFTPClient(serverID)
 	if err != nil {
@@ -1291,32 +1278,11 @@ func (sc *SSHController) HandleFileUploadRequest(serverID, localPath, remotePath
 		return fmt.Errorf("文件上传失败: %v", err)
 	}
 
-	// 上传完成后，通知终端
-	if sessionExists {
-		session, _ := sc.terminalSessions[serverID]
-		if session != nil {
-			session.SendCommandWithoutNewline(fmt.Sprintf("\r\n[INFO] 文件上传成功: %s -> %s\r\n", localPath, remotePath))
-		}
-	}
-
 	return nil
 }
 
 // HandleFileDownloadRequest 处理文件下载请求
 func (sc *SSHController) HandleFileDownloadRequest(serverID, remotePath, localPath string) error {
-	// 检查终端会话状态
-	sc.mutex.RLock()
-	_, sessionExists := sc.terminalSessions[serverID]
-	sc.mutex.RUnlock()
-
-	if sessionExists {
-		// 如果终端会话存在，发送提示到终端
-		session, _ := sc.terminalSessions[serverID]
-		if session != nil {
-			session.SendCommandWithoutNewline("\r\n[INFO] 正在下载文件，请等待...\r\n")
-		}
-	}
-
 	// 确保SFTP客户端已创建
 	err := sc.EnsureSFTPClient(serverID)
 	if err != nil {
@@ -1327,14 +1293,6 @@ func (sc *SSHController) HandleFileDownloadRequest(serverID, remotePath, localPa
 	_, err = sc.DownloadFile(serverID, remotePath, localPath)
 	if err != nil {
 		return fmt.Errorf("文件下载失败: %v", err)
-	}
-
-	// 下载完成后，通知终端
-	if sessionExists {
-		session, _ := sc.terminalSessions[serverID]
-		if session != nil {
-			session.SendCommandWithoutNewline(fmt.Sprintf("\r\n[INFO] 文件下载成功: %s -> %s\r\n", remotePath, localPath))
-		}
 	}
 
 	return nil

@@ -145,6 +145,7 @@ import {
   UpdateServerGroup,
   HandleFileUploadRequest,
   HandleFileDownloadRequest,
+  SendScriptToTerminal,
 } from '../../wailsjs/go/controllers/SSHController';
 import Terminal from './Terminal.vue';
 import FileManager from './FileManager.vue';
@@ -649,107 +650,12 @@ export default {
         // 显示处理中的提示
         this.$message.loading('正在处理脚本命令...', 0);
 
-        // 解析脚本命令
-        const commands = script.content.split('\n').filter(cmd => cmd.trim() !== '');
-
-        if (commands.length === 0) {
-          this.$message.error('脚本中没有有效的命令');
-          return;
-        }
-
-        // 逐行发送命令
-        for (const command of commands) {
-          // 忽略注释和空行
-          if (command.trim() === '' || command.trim().startsWith('#')) {
-            continue;
-          }
-
-          // 检查是否是文件上传命令
-          if (command.trim().startsWith('$upload ')) {
-            // 文件上传命令，直接调用后端方法处理
-            const uploadParams = command.trim().substring(8).trim().split(/\s+/);
-            if (uploadParams.length >= 2) {
-              const localPath = uploadParams[0];
-              const remoteDir = uploadParams[1];
-
-              // 构造远程文件路径（与后端逻辑保持一致）
-              let localFileName = localPath;
-              if (localPath.lastIndexOf('/') !== -1) {
-                localFileName = localPath.substring(localPath.lastIndexOf('/') + 1);
-              } else if (localPath.lastIndexOf('\\') !== -1) {
-                localFileName = localPath.substring(localPath.lastIndexOf('\\') + 1);
-              }
-
-              let remotePath = remoteDir;
-              if (!remoteDir.endsWith('/')) {
-                remotePath += '/';
-              }
-              remotePath += localFileName;
-
-              try {
-                await HandleFileUploadRequest(serverId, localPath, remotePath);
-                this.$message.success(`文件上传成功: ${localPath} -> ${remotePath}`);
-              } catch (error) {
-                console.error('文件上传失败:', error);
-                this.$message.error(`文件上传失败: ${error.message}`);
-                // 遇到错误时停止执行
-                throw error;
-              }
-            } else {
-              const errorMsg = `上传命令格式错误: ${command}`;
-              console.error(errorMsg);
-              this.$message.error(errorMsg);
-              // 遇到错误时停止执行
-              throw new Error(errorMsg);
-            }
-            // 等待文件操作完成后再继续执行后续命令
-            await new Promise(resolve => setTimeout(resolve, 1000));
-            continue;
-          }
-
-          // 检查是否是文件下载命令
-          if (command.trim().startsWith('$download ')) {
-            // 文件下载命令，直接调用后端方法处理
-            const downloadParams = command.trim().substring(10).trim().split(/\s+/);
-            if (downloadParams.length >= 2) {
-              const remotePath = downloadParams[0];
-              const localPath = downloadParams[1];
-
-              try {
-                await HandleFileDownloadRequest(serverId, remotePath, localPath);
-                this.$message.success(`文件下载成功: ${remotePath} -> ${localPath}`);
-              } catch (error) {
-                console.error('文件下载失败:', error);
-                this.$message.error(`文件下载失败: ${error.message}`);
-                // 遇到错误时停止执行
-                throw error;
-              }
-            } else {
-              const errorMsg = `下载命令格式错误: ${command}`;
-              console.error(errorMsg);
-              this.$message.error(errorMsg);
-              // 遇到错误时停止执行
-              throw new Error(errorMsg);
-            }
-            // 等待文件操作完成后再继续执行后续命令
-            await new Promise(resolve => setTimeout(resolve, 1000));
-            continue;
-          }
-
-          // 发送普通命令到终端
-          // 通过全局事件总线发送命令
-          const event = new CustomEvent('send-command-to-terminal', {
-            detail: { serverId: serverId, command: command }
-          });
-          window.dispatchEvent(event);
-
-          // 等待一小段时间，模拟用户输入间隔
-          await new Promise(resolve => setTimeout(resolve, 500));
-        }
+        // 调用后端的SendScriptToTerminal方法，统一处理脚本命令
+        await SendScriptToTerminal(script.id, serverId);
 
         // 隐藏加载提示并显示成功消息
         this.$message.destroy();
-        this.$message.success('脚本命令处理完成');
+        this.$message.success('脚本命令已发送到终端');
       } catch (error) {
         // 隐藏加载提示并显示错误消息
         this.$message.destroy();
