@@ -99,18 +99,44 @@ func (s *SSHConnection) ExecuteCommandsWithSharedSession(commands []string) ([]s
 	}
 	defer session.Close()
 
-	// 将多个命令组合成一个 shell 脚本，用 && 连接
-	// 这样它们会在同一个 shell session 中执行，共享工作目录和环境变量
-	// 使用分号连接，这样即使前面的命令失败，后面的命令也会执行
-	script := strings.Join(commands, "; ")
+	// 为每个命令添加一个唯一的分隔符，用于分割输出
+	// 使用一个不太可能出现在正常输出中的标记
+	separator := fmt.Sprintf("===COMMAND_SEPARATOR_%d===", time.Now().UnixNano())
+
+	// 将每个命令用分隔符包装
+	var wrappedCommands []string
+	for _, cmd := range commands {
+		wrappedCommands = append(wrappedCommands, fmt.Sprintf("%s; echo '%s'", cmd, separator))
+	}
+
+	// 将多个命令组合成一个 shell 脚本
+	script := strings.Join(wrappedCommands, "; ")
 
 	output, err := session.CombinedOutput(script)
 	if err != nil {
-		// 将完整输出作为第一个元素返回，这样即使失败也能看到输出
-		return []string{string(output)}, fmt.Errorf("执行命令失败: %v", err)
+		// 即使失败，也尝试分割输出，这样可以看到每个命令的部分输出
 	}
 
-	return []string{string(output)}, nil
+	// 按分隔符分割输出
+	outputStr := string(output)
+	parts := strings.Split(outputStr, separator)
+
+	var outputs []string
+	for i := 0; i < len(commands); i++ {
+		if i < len(parts) {
+			// 移除每个部分前后的空格和换行
+			outputText := strings.TrimSpace(parts[i])
+			outputs = append(outputs, outputText)
+		} else {
+			outputs = append(outputs, "")
+		}
+	}
+
+	if err != nil {
+		return outputs, fmt.Errorf("执行命令失败: %v", err)
+	}
+
+	return outputs, nil
 }
 
 // Close 关闭SSH连接
@@ -141,7 +167,7 @@ func (s *SSHConnection) CreateSFTPClient() (*sftp.Client, error) {
 }
 
 // UploadFile 上传文件
-func (s *SSHConnection) UploadFile(sftpClient *sftp.Client, localPath, remotePath string) error {
+func (s *SSHConnection) UploadFile(sftpClient *sftp.Client, localPath, remotePath string, progressCallback func(transferred int64, total int64)) error {
 	if s.Client == nil {
 		return fmt.Errorf("SSH连接未建立")
 	}
@@ -152,17 +178,43 @@ func (s *SSHConnection) UploadFile(sftpClient *sftp.Client, localPath, remotePat
 	}
 	defer localFile.Close()
 
+	// 获取文件大小
+	fileInfo, err := localFile.Stat()
+	if err != nil {
+		return fmt.Errorf("无法获取文件信息: %v", err)
+	}
+	totalSize := fileInfo.Size()
+
 	remoteFile, err := sftpClient.Create(remotePath)
 	if err != nil {
 		return fmt.Errorf("无法创建远程文件: %v", err)
 	}
 	defer remoteFile.Close()
 
-	// 使用带缓冲的拷贝，提高大文件传输效率
+	// 使用带进度追踪的拷贝
 	buf := make([]byte, 32*1024) // 32KB 缓冲区
-	_, err = io.CopyBuffer(remoteFile, localFile, buf)
-	if err != nil {
-		return fmt.Errorf("文件传输失败: %v", err)
+	var transferred int64
+
+	for {
+		n, err := localFile.Read(buf)
+		if n > 0 {
+			_, writeErr := remoteFile.Write(buf[:n])
+			if writeErr != nil {
+				return fmt.Errorf("文件传输失败: %v", writeErr)
+			}
+			transferred += int64(n)
+
+			// 调用进度回调
+			if progressCallback != nil {
+				progressCallback(transferred, totalSize)
+			}
+		}
+		if err != nil {
+			if err == io.EOF {
+				break
+			}
+			return fmt.Errorf("读取文件失败: %v", err)
+		}
 	}
 
 	// 确保数据刷新到磁盘
@@ -173,7 +225,7 @@ func (s *SSHConnection) UploadFile(sftpClient *sftp.Client, localPath, remotePat
 }
 
 // DownloadFile 下载文件
-func (s *SSHConnection) DownloadFile(sftpClient *sftp.Client, remotePath, localPath string) error {
+func (s *SSHConnection) DownloadFile(sftpClient *sftp.Client, remotePath, localPath string, progressCallback func(transferred int64, total int64)) error {
 	if s.Client == nil {
 		return fmt.Errorf("SSH连接未建立")
 	}
@@ -184,17 +236,43 @@ func (s *SSHConnection) DownloadFile(sftpClient *sftp.Client, remotePath, localP
 	}
 	defer remoteFile.Close()
 
+	// 获取文件大小
+	fileInfo, err := remoteFile.Stat()
+	if err != nil {
+		return fmt.Errorf("无法获取远程文件信息: %v", err)
+	}
+	totalSize := fileInfo.Size()
+
 	localFile, err := os.Create(localPath)
 	if err != nil {
 		return fmt.Errorf("无法创建本地文件: %v", err)
 	}
 	defer localFile.Close()
 
-	// 使用带缓冲的拷贝，提高大文件传输效率
+	// 使用带进度追踪的拷贝
 	buf := make([]byte, 32*1024) // 32KB 缓冲区
-	_, err = io.CopyBuffer(localFile, remoteFile, buf)
-	if err != nil {
-		return fmt.Errorf("文件传输失败: %v", err)
+	var transferred int64
+
+	for {
+		n, err := remoteFile.Read(buf)
+		if n > 0 {
+			_, writeErr := localFile.Write(buf[:n])
+			if writeErr != nil {
+				return fmt.Errorf("文件传输失败: %v", writeErr)
+			}
+			transferred += int64(n)
+
+			// 调用进度回调
+			if progressCallback != nil {
+				progressCallback(transferred, totalSize)
+			}
+		}
+		if err != nil {
+			if err == io.EOF {
+				break
+			}
+			return fmt.Errorf("读取远程文件失败: %v", err)
+		}
 	}
 
 	// 确保数据刷新到磁盘

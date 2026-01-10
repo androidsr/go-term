@@ -733,7 +733,38 @@ func (sc *SSHController) UploadFile(serverID, localPath, remotePath string) (str
 	}
 
 	// 上传文件（不持锁）
-	if err := conn.UploadFile(sftpClient, localPath, remotePath); err != nil {
+	if err := conn.UploadFile(sftpClient, localPath, remotePath, nil); err != nil {
+		return "", fmt.Errorf("上传文件失败: %v", err)
+	}
+	return "文件上传成功", nil
+}
+
+// UploadFileWithProgress 带进度回调的上传文件
+// wails:export
+func (sc *SSHController) UploadFileWithProgress(serverID, localPath, remotePath string) (string, error) {
+	sc.mutex.RLock()
+	conn, exists := sc.connections[serverID]
+	sftpClient, sftpExists := sc.sftpClients[serverID]
+	sc.mutex.RUnlock()
+
+	if !exists || conn.Client == nil {
+		return "", fmt.Errorf("服务器未连接，请先连接服务器")
+	}
+	if !sftpExists {
+		return "", fmt.Errorf("SFTP客户端未创建，请先创建SFTP客户端")
+	}
+
+	// 带进度回调的上传
+	if err := conn.UploadFile(sftpClient, localPath, remotePath, func(transferred, total int64) {
+		// 发送进度事件到前端
+		percent := float64(transferred) / float64(total) * 100
+		runtime.EventsEmit(sc.ctx, "file-upload-progress", map[string]interface{}{
+			"serverID":    serverID,
+			"transferred": transferred,
+			"total":       total,
+			"percent":     percent,
+		})
+	}); err != nil {
 		return "", fmt.Errorf("上传文件失败: %v", err)
 	}
 	return "文件上传成功", nil
@@ -754,7 +785,38 @@ func (sc *SSHController) DownloadFile(serverID, remotePath, localPath string) (s
 	}
 
 	// 下载文件（不持锁）
-	if err := conn.DownloadFile(sftpClient, remotePath, localPath); err != nil {
+	if err := conn.DownloadFile(sftpClient, remotePath, localPath, nil); err != nil {
+		return "", fmt.Errorf("下载文件失败: %v", err)
+	}
+	return "文件下载成功", nil
+}
+
+// DownloadFileWithProgress 带进度回调的下载文件
+// wails:export
+func (sc *SSHController) DownloadFileWithProgress(serverID, remotePath, localPath string) (string, error) {
+	sc.mutex.RLock()
+	conn, exists := sc.connections[serverID]
+	sftpClient, sftpExists := sc.sftpClients[serverID]
+	sc.mutex.RUnlock()
+
+	if !exists || conn.Client == nil {
+		return "", fmt.Errorf("服务器未连接，请先连接服务器")
+	}
+	if !sftpExists {
+		return "", fmt.Errorf("SFTP客户端未创建，请先创建SFTP客户端")
+	}
+
+	// 带进度回调的下载
+	if err := conn.DownloadFile(sftpClient, remotePath, localPath, func(transferred, total int64) {
+		// 发送进度事件到前端
+		percent := float64(transferred) / float64(total) * 100
+		runtime.EventsEmit(sc.ctx, "file-download-progress", map[string]interface{}{
+			"serverID":    serverID,
+			"transferred": transferred,
+			"total":       total,
+			"percent":     percent,
+		})
+	}); err != nil {
 		return "", fmt.Errorf("下载文件失败: %v", err)
 	}
 	return "文件下载成功", nil

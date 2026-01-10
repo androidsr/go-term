@@ -66,6 +66,10 @@ export function DownloadFile(arg1, arg2, arg3) {
   return window['go']['controllers']['SSHController']['DownloadFile'](arg1, arg2, arg3);
 }
 
+export function DownloadFileWithProgress(arg1, arg2, arg3) {
+  return window['go']['controllers']['SSHController']['DownloadFileWithProgress'](arg1, arg2, arg3);
+}
+
 export function EnsureSFTPClient(arg1) {
   return window['go']['controllers']['SSHController']['EnsureSFTPClient'](arg1);
 }
@@ -176,4 +180,8 @@ export function UpdateServerGroup(arg1) {
 
 export function UploadFile(arg1, arg2, arg3) {
   return window['go']['controllers']['SSHController']['UploadFile'](arg1, arg2, arg3);
+}
+
+export function UploadFileWithProgress(arg1, arg2, arg3) {
+  return window['go']['controllers']['SSHController']['UploadFileWithProgress'](arg1, arg2, arg3);
 }

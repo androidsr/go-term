@@ -355,7 +355,7 @@ func (ese *EnhancedScriptExecutor) ExecuteCommandMode(
 		outputs, err := executor.ExecCommandsInSharedSession(serverID, shellCommands)
 		if err != nil {
 			// 失败时，为所有shell命令添加失败记录
-			for _, cmd := range shellCommands {
+			for i, cmd := range shellCommands {
 				cmdOutput := models.CommandOutput{
 					Command:   cmd,
 					Status:    "failed",
@@ -363,8 +363,8 @@ func (ese *EnhancedScriptExecutor) ExecuteCommandMode(
 					EndTime:   time.Now().Format("2006-01-02 15:04:05"),
 				}
 				cmdOutput.Error = err.Error()
-				if len(outputs) > 0 {
-					cmdOutput.Output = outputs[0]
+				if i < len(outputs) {
+					cmdOutput.Output = outputs[i]
 				} else {
 					cmdOutput.Output = cmdOutput.Error
 				}
@@ -374,8 +374,7 @@ func (ese *EnhancedScriptExecutor) ExecuteCommandMode(
 		}
 
 		// 成功时，为每个shell命令添加成功记录
-		// 注意：由于所有命令在同一个session中执行，我们只有一个输出
-		// 这里简化处理，将同一个输出分配给所有命令
+		// outputs 数组已经包含了每个命令的输出
 		for i, cmd := range shellCommands {
 			cmdOutput := models.CommandOutput{
 				Command:   cmd,
@@ -383,10 +382,8 @@ func (ese *EnhancedScriptExecutor) ExecuteCommandMode(
 				StartTime: now,
 				EndTime:   time.Now().Format("2006-01-02 15:04:05"),
 			}
-			if len(outputs) > i {
+			if i < len(outputs) {
 				cmdOutput.Output = outputs[i]
-			} else if len(outputs) > 0 {
-				cmdOutput.Output = outputs[0]
 			} else {
 				cmdOutput.Output = "命令执行完成，无输出"
 			}

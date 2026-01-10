@@ -36,6 +36,8 @@ export function DisconnectFromServer(arg1:string):Promise<string>;
 
 export function DownloadFile(arg1:string,arg2:string,arg3:string):Promise<string>;
 
+export function DownloadFileWithProgress(arg1:string,arg2:string,arg3:string):Promise<string>;
+
 export function EnsureSFTPClient(arg1:string):Promise<void>;
 
 export function ExecCommand(arg1:string,arg2:string):Promise<string>;
@@ -91,3 +93,5 @@ export function UpdateServer(arg1:string,arg2:models.Server):Promise<void>;
 export function UpdateServerGroup(arg1:models.ServerGroup):Promise<void>;
 
 export function UploadFile(arg1:string,arg2:string,arg3:string):Promise<string>;
+
+export function UploadFileWithProgress(arg1:string,arg2:string,arg3:string):Promise<string>;

@@ -13,7 +13,7 @@
                 @search="navigateToPath" />
             </div>
             <div class="file-actions">
-              <a-button @click="selectAndUploadFile">
+              <a-button @click="selectAndUploadFile" :loading="uploading">
                 <UploadOutlined />上传文件
               </a-button>
               <a-button @click="showCreateFolderModal">
@@ -45,7 +45,7 @@
               </template>
               <template v-else-if="column.dataIndex === 'action'">
                 <a-space>
-                  <a-button v-if="record.type === 'file'" size="small" @click="downloadFile(record)">
+                  <a-button v-if="record.type === 'file'" size="small" @click="downloadFile(record)" :loading="downloading">
                     下载
                   </a-button>
                   <a-button size="small" @click="deleteFile(record)">删除</a-button>
@@ -66,6 +66,21 @@
       </a-form>
     </a-modal>
 
+    <!-- 进度条模态框 -->
+    <a-modal v-model:open="progressModalVisible" :title="progressTitle" :closable="false" :maskClosable="false"
+      :footer="null" width="500px">
+      <div class="progress-container">
+        <div class="progress-info">
+          <span>{{ progressInfo.fileName }}</span>
+          <span>{{ progressInfo.transferred }} / {{ progressInfo.total }}</span>
+        </div>
+        <a-progress :percent="progressPercent" :status="progressStatus" />
+        <div class="progress-speed">
+          <span>{{ progressInfo.speed }}</span>
+        </div>
+      </div>
+    </a-modal>
+
     <!-- 文件选择对话框 -->
     <input ref="fileInput" type="file" style="display: none" @change="onFileSelected" />
   </div>
@@ -83,11 +98,12 @@ import {
 import {
   CreateSFTPClient,
   ListDirectory,
-  UploadFile,
-  DownloadFile,
+  UploadFileWithProgress,
+  DownloadFileWithProgress,
   CreateDirectory,
   DeleteFile
 } from '../../wailsjs/go/controllers/SSHController';
+import { EventsOn, EventsOff } from '../../wailsjs/runtime/runtime';
 
 export default {
   name: 'FileManager',
@@ -140,7 +156,24 @@ export default {
           dataIndex: 'action',
           key: 'action'
         }
-      ]
+      ],
+      // 进度条相关
+      progressModalVisible: false,
+      progressTitle: '',
+      progressPercent: 0,
+      progressStatus: 'active',
+      progressInfo: {
+        fileName: '',
+        transferred: '0 B',
+        total: '0 B',
+        speed: '0 B/s'
+      },
+      // 用于追踪速度计算
+      progressStartTime: null,
+      lastTransferred: 0,
+      progressTimer: null,
+      uploading: false,
+      downloading: false
     };
   },
   computed: {
@@ -151,8 +184,54 @@ export default {
   async mounted() {
     await this.initializeSFTP();
     await this.loadFileList();
+    // 监听进度事件
+    this.setupProgressListeners();
+  },
+  beforeUnmount() {
+    // 清理进度事件监听
+    EventsOff('file-upload-progress');
+    EventsOff('file-download-progress');
+    if (this.progressTimer) {
+      clearInterval(this.progressTimer);
+    }
   },
   methods: {
+    setupProgressListeners() {
+      // 监听上传进度
+      EventsOn('file-upload-progress', (data) => {
+        const percent = Math.floor(data.percent);
+        this.progressPercent = percent;
+        this.progressInfo.transferred = this.formatFileSize(data.transferred);
+        this.progressInfo.total = this.formatFileSize(data.total);
+
+        // 计算速度
+        if (this.progressStartTime) {
+          const elapsed = (Date.now() - this.progressStartTime) / 1000;
+          if (elapsed > 0) {
+            const speed = Math.floor(data.transferred / elapsed);
+            this.progressInfo.speed = this.formatFileSize(speed) + '/s';
+          }
+        }
+      });
+
+      // 监听下载进度
+      EventsOn('file-download-progress', (data) => {
+        const percent = Math.floor(data.percent);
+        this.progressPercent = percent;
+        this.progressInfo.transferred = this.formatFileSize(data.transferred);
+        this.progressInfo.total = this.formatFileSize(data.total);
+
+        // 计算速度
+        if (this.progressStartTime) {
+          const elapsed = (Date.now() - this.progressStartTime) / 1000;
+          if (elapsed > 0) {
+            const speed = Math.floor(data.transferred / elapsed);
+            this.progressInfo.speed = this.formatFileSize(speed) + '/s';
+          }
+        }
+      });
+    },
+
     async initializeSFTP() {
       try {
         const result = await CreateSFTPClient(this.serverId);
@@ -237,13 +316,50 @@ export default {
           const fileName = localPath.split('\\').pop().split('/').pop();
           const remotePath = `${this.currentPath}/${fileName}`;
 
-          const result = await UploadFile(this.serverId, localPath, remotePath);
-          this.$message.success(result);
-          await this.refreshFileList();
+          await this.uploadWithProgress(localPath, remotePath, fileName);
         }
       } catch (error) {
         console.error('上传文件失败:', error);
         this.$message.error(`上传文件失败: ${error.message}`);
+      }
+    },
+
+    async uploadWithProgress(localPath, remotePath, fileName) {
+      this.uploading = true;
+      this.progressModalVisible = true;
+      this.progressTitle = '上传文件';
+      this.progressPercent = 0;
+      this.progressStatus = 'active';
+      this.progressInfo = {
+        fileName: fileName,
+        transferred: '0 B',
+        total: '0 B',
+        speed: '0 B/s'
+      };
+      this.progressStartTime = Date.now();
+
+      try {
+        const result = await UploadFileWithProgress(this.serverId, localPath, remotePath);
+
+        this.progressPercent = 100;
+        this.progressStatus = 'success';
+
+        // 短暂延迟后关闭进度条
+        setTimeout(() => {
+          this.progressModalVisible = false;
+        }, 1000);
+
+        this.$message.success(result);
+        await this.refreshFileList();
+      } catch (error) {
+        this.progressStatus = 'exception';
+        setTimeout(() => {
+          this.progressModalVisible = false;
+        }, 2000);
+        throw error;
+      } finally {
+        this.uploading = false;
+        this.progressStartTime = null;
       }
     },
 
@@ -268,13 +384,56 @@ export default {
         const localPath = await SaveFileDialog('选择保存位置', file.name);
 
         if (localPath) {
-          const result = await DownloadFile(this.serverId, file.path, localPath);
-          this.$message.success(result);
+          await this.downloadWithProgress(file.path, localPath, file.name);
         }
       } catch (error) {
         console.error('下载文件失败:', error);
         this.$message.error(`下载文件失败: ${error.message}`);
       }
+    },
+
+    async downloadWithProgress(remotePath, localPath, fileName) {
+      this.downloading = true;
+      this.progressModalVisible = true;
+      this.progressTitle = '下载文件';
+      this.progressPercent = 0;
+      this.progressStatus = 'active';
+      this.progressInfo = {
+        fileName: fileName,
+        transferred: '0 B',
+        total: this.formatFileSize(this.getFileSize(fileName)),
+        speed: '0 B/s'
+      };
+      this.progressStartTime = Date.now();
+
+      try {
+        const result = await DownloadFileWithProgress(this.serverId, remotePath, localPath);
+
+        this.progressPercent = 100;
+        this.progressStatus = 'success';
+
+        // 短暂延迟后关闭进度条
+        setTimeout(() => {
+          this.progressModalVisible = false;
+        }, 1000);
+
+        this.$message.success(result);
+      } catch (error) {
+        this.progressStatus = 'exception';
+        setTimeout(() => {
+          this.progressModalVisible = false;
+        }, 2000);
+        throw error;
+      } finally {
+        this.downloading = false;
+        this.progressStartTime = null;
+      }
+    },
+
+    getFileSize(fileName) {
+      // 从文件列表中查找文件大小
+      const file = this.fileList.find(f => f.name === fileName);
+      return file ? file.size : 0;
     },
 
     showCreateFolderModal() {
@@ -408,5 +567,25 @@ export default {
   .file-actions {
     justify-content: center;
   }
+}
+
+/* 进度条样式 */
+.progress-container {
+  padding: 20px 0;
+}
+
+.progress-info {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 16px;
+  font-size: 14px;
+  color: #666;
+}
+
+.progress-speed {
+  text-align: center;
+  margin-top: 16px;
+  font-size: 14px;
+  color: #999;
 }
 </style>
