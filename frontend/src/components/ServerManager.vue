@@ -5,8 +5,8 @@
         @change="onTabChange">
         <!-- 主页标签页 - 服务器管理 -->
         <a-tab-pane key="home" tab="主页" :closable="false">
-          <a-layout class="layout">
-            <a-layout-sider width="270" class="sider">
+          <a-layout class="layout" style="background: transparent;">
+            <a-layout-sider width="270" class="sider" style="background: transparent;">
               <div class="group-section">
                 <div class="group-header">
                   <h3>服务器分组</h3>
@@ -27,8 +27,8 @@
               </div>
             </a-layout-sider>
 
-            <a-layout>
-              <a-layout-content class="content">
+            <a-layout style="background: transparent;">
+              <a-layout-content class="content" style="background: transparent;">
                 <div class="server-header">
                   <a-button v-if="currentGroupId" type="primary" @click="showAddServerModal">
                     <PlusOutlined /> 添加服务器
@@ -76,7 +76,7 @@
 
         <!-- 终端标签页 -->
         <a-tab-pane v-for="tab in terminalTabs" :key="tab.id" :tab="tab.title" closable>
-          <div v-if="tab.type === 'terminal'" style="height: 100%; background: #1e1e1e; padding: 0; margin: 0">
+          <div v-if="tab.type === 'terminal'" style="height: 100%; padding: 0; margin: 0">
             <Terminal :server="tab.server" :server-id="tab.serverId" @terminal-ready="checkPendingScript" />
           </div>
           <div v-else-if="tab.type === 'file'" style="height: 100%; padding: 0; margin: 0">
@@ -693,16 +693,11 @@ export default {
 
 <style scoped>
 .main-tabs-container {
-  height: 100%;
+  height: 100vh;
 }
 
 .layout {
-  height: 100%;
-}
-
-.sider {
-  background: #fff;
-  border-right: 1px solid #f0f0f0;
+  height: 100vh;
 }
 
 .group-section {
@@ -731,6 +726,5 @@ export default {
 
 .content {
   padding: 16px;
-  background: #fff;
 }
 </style>

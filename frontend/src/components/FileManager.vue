@@ -513,7 +513,6 @@ export default {
 <style scoped>
 .file-manager-container {
   height: 100%;
-  background: #fff;
 }
 
 .file-layout {
@@ -522,7 +521,6 @@ export default {
 
 .content {
   padding: 16px;
-  background: #fff;
 }
 
 .file-header {
@@ -588,13 +586,11 @@ export default {
   justify-content: space-between;
   margin-bottom: 16px;
   font-size: 14px;
-  color: #666;
 }
 
 .progress-speed {
   text-align: center;
   margin-top: 16px;
   font-size: 14px;
-  color: #999;
 }
 </style>

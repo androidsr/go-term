@@ -1,5 +1,7 @@
 <template>
-  <a-config-provider :locale="zhCN">
+  <a-config-provider :locale="zhCN" :theme="{
+    algorithm: theme.darkAlgorithm
+  }">
     <div id="app">
       <ServerManager />
     </div>
@@ -9,6 +11,7 @@
 <script>
 import ServerManager from './components/ServerManager.vue';
 import zhCN from 'ant-design-vue/es/locale/zh_CN';
+import { theme } from 'ant-design-vue';
 
 export default {
   name: 'App',
@@ -17,7 +20,8 @@ export default {
   },
   data() {
     return {
-      zhCN
+      zhCN,
+      theme
     };
   }
 };

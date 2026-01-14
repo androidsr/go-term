@@ -550,12 +550,12 @@ export default {
 .custom-context-menu {
   position: fixed;
   z-index: 10000;
-  background: #fff;
+  background: var(--antd-color-bg-container);
   border-radius: 4px;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
   min-width: 160px;
   padding: 4px 0;
-  border: 1px solid #e8e8e8;
+  border: 1px solid var(--antd-color-border);
   margin: 0;
 }
 
@@ -565,26 +565,26 @@ export default {
   display: flex;
   align-items: center;
   font-size: 14px;
-  color: rgba(0, 0, 0, 0.85);
+  color: var(--antd-color-text);
   transition: background-color 0.3s;
 }
 
 .menu-item:hover {
-  background-color: #e6f7ff;
+  background-color: var(--antd-color-bg-text-hover);
 }
 
 .menu-divider {
   height: 1px;
-  background-color: #e8e8e8;
+  background-color: var(--antd-color-border);
   margin: 4px 0;
 }
 
 .danger-menu-item {
-  color: #ff4d4f !important;
+  color: var(--antd-color-error) !important;
 }
 
 .danger-menu-item:hover {
-  background-color: #fff1f0  !important;
+  background-color: rgba(255, 77, 79, 0.1) !important;
 }
 
 </style>

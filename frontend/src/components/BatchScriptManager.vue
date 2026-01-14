@@ -436,17 +436,14 @@ export default {
 .content-preview {
   font-family: 'Courier New', monospace;
   font-size: 12px;
-  color: #666;
 }
 
 .script-help {
   margin-top: 8px;
-  color: #999;
 }
 
 .server-help {
   margin-top: 4px;
-  color: #999;
 }
 
 .execution-results {
@@ -455,7 +452,7 @@ export default {
 }
 
 .result-item {
-  border: 1px solid #d9d9d9;
+  border: 1px solid var(--antd-color-border);
   border-radius: 4px;
   padding: 12px;
   margin-bottom: 12px;
@@ -473,7 +470,6 @@ export default {
 }
 
 .result-time {
-  color: #666;
   font-size: 12px;
   margin-bottom: 8px;
 }
@@ -485,7 +481,6 @@ export default {
 
 .result-output pre,
 .result-error pre {
-  background: #f5f5f5;
   padding: 8px;
   border-radius: 4px;
   white-space: pre-wrap;
@@ -495,27 +490,20 @@ export default {
   font-size: 12px;
 }
 
-.result-error pre {
-  background: #fff2f0;
-  color: #a8071a;
-}
-
 .command-results {
   margin-top: 12px;
-  border: 1px solid #e8e8e8;
+  border: 1px solid var(--antd-color-border);
   border-radius: 4px;
-  background: #fafafa;
 }
 
 .command-results-header {
   padding: 8px 12px;
-  background: #f0f0f0;
-  border-bottom: 1px solid #e8e8e8;
+  border-bottom: 1px solid var(--antd-color-border);
   font-weight: bold;
 }
 
 .command-item {
-  border-bottom: 1px solid #f0f0f0;
+  border-bottom: 1px solid var(--antd-color-border);
   padding: 12px;
 }
 
@@ -531,19 +519,16 @@ export default {
 }
 
 .command-text {
-  background: #f6f8fa;
   padding: 2px 6px;
   border-radius: 3px;
   font-family: 'Courier New', monospace;
   font-size: 13px;
-  color: #d73a49;
-  border: 1px solid #e1e4e8;
+  border: 1px solid var(--antd-color-border);
   flex: 1;
 }
 
 .command-time {
   font-size: 11px;
-  color: #666;
   white-space: nowrap;
 }
 
@@ -555,7 +540,6 @@ export default {
 
 .command-output pre,
 .command-error pre {
-  background: #f6f8fa;
   padding: 8px;
   border-radius: 4px;
   white-space: pre-wrap;
@@ -563,18 +547,11 @@ export default {
   margin: 4px 0 0 0;
   font-family: 'Courier New', monospace;
   font-size: 12px;
-  border-left: 3px solid #28a745;
-}
-
-.command-error pre {
-  background: #fff5f5;
-  color: #d73a49;
-  border-left-color: #cb2431;
+  border-left: 3px solid #52c41a;
 }
 
 .execution-type-help {
   margin-top: 8px;
-  color: #666;
   line-height: 1.4;
 }
 </style>

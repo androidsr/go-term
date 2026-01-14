@@ -31,7 +31,7 @@ func main() {
 		AssetServer: &assetserver.Options{
 			Assets: assets,
 		},
-		BackgroundColour: &options.RGBA{R: 255, G: 255, B: 255, A: 1},
+		BackgroundColour: &options.RGBA{R: 20, G: 20, B: 20, A: 1},
 		OnStartup: func(ctx context.Context) {
 			app.startup(ctx)
 			sshController.Startup(ctx)
@@ -48,7 +48,7 @@ func main() {
 			DisableFramelessWindowDecorations: false,
 			WebviewUserDataPath:               "",
 			WebviewBrowserPath:                "",
-			Theme:                             windows.Light,
+			Theme:                             windows.Dark,
 		},
 	})
 
