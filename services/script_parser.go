@@ -63,8 +63,6 @@ func (sp *ScriptParser) ParseCommands(scriptContent string) []string {
 	return commands
 }
 
-
-
 // IsValidCommand 检查是否是有效命令（不是注释或空行）
 func (sp *ScriptParser) IsValidCommand(line string) bool {
 	trimmed := strings.TrimSpace(line)
@@ -80,4 +78,19 @@ func (sp *ScriptParser) IsValidCommand(line string) bool {
 	}
 
 	return true
+}
+
+// IsLocalCommand 检查是否是本地命令（以 ! 开头）
+func (sp *ScriptParser) IsLocalCommand(line string) bool {
+	trimmed := strings.TrimSpace(line)
+	return strings.HasPrefix(trimmed, "!")
+}
+
+// StripLocalCommandPrefix 移除本地命令前缀 !
+func (sp *ScriptParser) StripLocalCommandPrefix(line string) string {
+	trimmed := strings.TrimSpace(line)
+	if strings.HasPrefix(trimmed, "!") {
+		return strings.TrimSpace(strings.TrimPrefix(trimmed, "!"))
+	}
+	return trimmed
 }

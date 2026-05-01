@@ -2,8 +2,12 @@ package services
 
 import (
 	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"regexp"
 	"strings"
+	"syscall"
 	"time"
 
 	"go-term/models"
@@ -11,7 +15,8 @@ import (
 
 // EnhancedScriptExecutor 增强的脚本执行器
 type EnhancedScriptExecutor struct {
-	scriptParser *ScriptParser
+	scriptParser   *ScriptParser
+	currentWorkDir string // 当前工作目录，用于本地命令的连续性
 }
 
 // NewEnhancedScriptExecutor 创建新的增强脚本执行器
@@ -21,7 +26,7 @@ func NewEnhancedScriptExecutor() *EnhancedScriptExecutor {
 	}
 }
 
-// ParseCommands 解析普通命令（支持文件操作指令）
+// ParseCommands 解析普通命令（支持文件操作指令和本地命令）
 func (ese *EnhancedScriptExecutor) ParseCommands(scriptContent string) []ParsedCommand {
 	rawCommands := ese.scriptParser.ParseCommands(scriptContent)
 	var parsedCommands []ParsedCommand
@@ -30,8 +35,11 @@ func (ese *EnhancedScriptExecutor) ParseCommands(scriptContent string) []ParsedC
 		trimmedCmd := strings.TrimSpace(cmd)
 		parsedCmd := ParsedCommand{}
 
-		// 检查是否是文件上传命令
-		if strings.HasPrefix(trimmedCmd, "$upload ") {
+		// 检查是否是本地命令（以 ! 开头）
+		if ese.scriptParser.IsLocalCommand(trimmedCmd) {
+			parsedCmd.CommandType = "local"
+			parsedCmd.Command = ese.scriptParser.StripLocalCommandPrefix(trimmedCmd)
+		} else if strings.HasPrefix(trimmedCmd, "$upload ") {
 			parsedCmd.CommandType = "upload"
 			parsedCmd.Command = strings.TrimSpace(strings.TrimPrefix(trimmedCmd, "$upload"))
 		} else if strings.HasPrefix(trimmedCmd, "$download ") {
@@ -62,13 +70,13 @@ func (ese *EnhancedScriptExecutor) ExecuteScriptMode(
 ) ([]models.CommandOutput, error) {
 	now := time.Now().Format("2006-01-02 15:04:05")
 
-	// 在脚本模式中，需要预处理文件操作命令
-	processedScript, fileOperations := ese.preprocessScriptForFileOperations(scriptContent)
+	// 在脚本模式中，需要预处理文件操作命令和本地命令
+	processedScript, mixedCommands := ese.preprocessScriptForFileOperations(scriptContent)
 
-	// 如果有文件操作命令，使用命令模式执行所有命令（保持原始顺序）
-	if len(fileOperations) > 0 {
+	// 如果有特殊操作（文件操作或本地命令），使用命令模式执行所有命令（保持原始顺序）
+	if len(mixedCommands) > 0 {
 		// 使用命令模式执行，这样可以按原始顺序执行所有命令
-		return ese.ExecuteCommandMode(fileOperations, executor, serverID)
+		return ese.ExecuteCommandMode(mixedCommands, executor, serverID)
 	}
 
 	// 没有文件操作时，正常执行脚本
@@ -162,12 +170,12 @@ func (ese *EnhancedScriptExecutor) extractLineInfoFromError(errorMsg, scriptCont
 	return ""
 }
 
-// preprocessScriptForFileOperations 预处理脚本，提取文件操作命令
+// preprocessScriptForFileOperations 预处理脚本，提取文件操作命令和本地命令
 func (ese *EnhancedScriptExecutor) preprocessScriptForFileOperations(scriptContent string) (string, []ParsedCommand) {
 	// 解析所有命令
 	commands := ese.scriptParser.ParseCommands(scriptContent)
 	var fileOperations []ParsedCommand
-	var hasFileOperations bool
+	var hasSpecialOperations bool
 
 	// 分类命令并按原始顺序创建混合命令列表
 	var mixedCommands []ParsedCommand
@@ -176,18 +184,23 @@ func (ese *EnhancedScriptExecutor) preprocessScriptForFileOperations(scriptConte
 		trimmedCmd := strings.TrimSpace(cmd)
 		parsedCmd := ParsedCommand{}
 
-		if strings.HasPrefix(trimmedCmd, "$upload ") {
+		if ese.scriptParser.IsLocalCommand(trimmedCmd) {
+			parsedCmd.CommandType = "local"
+			parsedCmd.Command = ese.scriptParser.StripLocalCommandPrefix(trimmedCmd)
+			mixedCommands = append(mixedCommands, parsedCmd)
+			hasSpecialOperations = true
+		} else if strings.HasPrefix(trimmedCmd, "$upload ") {
 			parsedCmd.CommandType = "upload"
 			parsedCmd.Command = strings.TrimSpace(strings.TrimPrefix(trimmedCmd, "$upload"))
 			fileOperations = append(fileOperations, parsedCmd)
 			mixedCommands = append(mixedCommands, parsedCmd)
-			hasFileOperations = true
+			hasSpecialOperations = true
 		} else if strings.HasPrefix(trimmedCmd, "$download ") {
 			parsedCmd.CommandType = "download"
 			parsedCmd.Command = strings.TrimSpace(strings.TrimPrefix(trimmedCmd, "$download"))
 			fileOperations = append(fileOperations, parsedCmd)
 			mixedCommands = append(mixedCommands, parsedCmd)
-			hasFileOperations = true
+			hasSpecialOperations = true
 		} else {
 			// 普通shell命令
 			parsedCmd.CommandType = "shell"
@@ -196,12 +209,12 @@ func (ese *EnhancedScriptExecutor) preprocessScriptForFileOperations(scriptConte
 		}
 	}
 
-	// 如果没有文件操作，返回原脚本和空列表
-	if !hasFileOperations {
+	// 如果没有特殊操作，返回原脚本和空列表
+	if !hasSpecialOperations {
 		return scriptContent, []ParsedCommand{}
 	}
 
-	// 构建不包含文件操作的脚本内容用于shell执行
+	// 构建不包含文件操作和本地命令的脚本内容用于shell执行
 	var shellCommands []string
 	for _, cmd := range mixedCommands {
 		if cmd.CommandType == "shell" {
@@ -293,20 +306,8 @@ func (ese *EnhancedScriptExecutor) ExecuteCommandMode(
 	var commandOutputs []models.CommandOutput
 	now := time.Now().Format("2006-01-02 15:04:05")
 
-	// 将命令分为两类：文件操作命令和shell命令
-	var fileOps []ParsedCommand
-	var shellCommands []string
-
+	// 按原始顺序执行所有命令（包括本地命令、文件操作命令和shell命令）
 	for _, parsedCmd := range commands {
-		if parsedCmd.CommandType == "upload" || parsedCmd.CommandType == "download" {
-			fileOps = append(fileOps, parsedCmd)
-		} else if parsedCmd.CommandType == "shell" {
-			shellCommands = append(shellCommands, parsedCmd.Command)
-		}
-	}
-
-	// 先执行文件操作命令
-	for _, parsedCmd := range fileOps {
 		cmdOutput := models.CommandOutput{
 			Command:   parsedCmd.Command,
 			Status:    "running",
@@ -316,10 +317,20 @@ func (ese *EnhancedScriptExecutor) ExecuteCommandMode(
 		var err error
 		var output string
 
-		if parsedCmd.CommandType == "upload" {
+		switch parsedCmd.CommandType {
+		case "local":
+			// 本地命令 - 在本地执行，不发送到服务器
+			output, err = ese.HandleLocalCommand(parsedCmd.Command)
+			cmdOutput.Command = "!" + parsedCmd.Command // 显示时保留前缀
+		case "upload":
 			output, err = ese.handleUploadCommand(executor, serverID, parsedCmd.Command)
-		} else if parsedCmd.CommandType == "download" {
+			cmdOutput.Command = "$upload " + parsedCmd.Command // 显示时保留前缀
+		case "download":
 			output, err = ese.handleDownloadCommand(executor, serverID, parsedCmd.Command)
+			cmdOutput.Command = "$download " + parsedCmd.Command // 显示时保留前缀
+		case "shell":
+			// shell命令暂不执行，后续批量处理
+			continue
 		}
 
 		cmdOutput.EndTime = time.Now().Format("2006-01-02 15:04:05")
@@ -334,23 +345,36 @@ func (ese *EnhancedScriptExecutor) ExecuteCommandMode(
 					errorMsg = strings.TrimSpace(parts[2])
 				}
 			}
-			if parsedCmd.CommandType == "upload" {
+			switch parsedCmd.CommandType {
+			case "local":
+				cmdOutput.Error = fmt.Sprintf("本地命令执行失败: %s", errorMsg)
+			case "upload":
 				cmdOutput.Error = fmt.Sprintf("文件上传失败: %s", errorMsg)
-			} else {
+			case "download":
 				cmdOutput.Error = fmt.Sprintf("文件下载失败: %s", errorMsg)
 			}
 			if output == "" {
 				cmdOutput.Output = cmdOutput.Error
 			}
 			commandOutputs = append(commandOutputs, cmdOutput)
-			return commandOutputs, fmt.Errorf("文件操作失败")
+			return commandOutputs, fmt.Errorf("命令执行失败")
 		} else {
 			cmdOutput.Status = "success"
 			commandOutputs = append(commandOutputs, cmdOutput)
 		}
 	}
 
-	// 然后在一个共享的session中执行所有shell命令
+	// 收集所有shell命令，在一个共享的session中执行
+	var shellCommands []string
+	var shellCommandIndices []int // 记录shell命令在原始commands数组中的索引
+	for i, parsedCmd := range commands {
+		if parsedCmd.CommandType == "shell" {
+			shellCommands = append(shellCommands, parsedCmd.Command)
+			shellCommandIndices = append(shellCommandIndices, i)
+		}
+	}
+
+	// 在一个共享的session中执行所有shell命令
 	if len(shellCommands) > 0 {
 		outputs, err := executor.ExecCommandsInSharedSession(serverID, shellCommands)
 		if err != nil {
@@ -394,6 +418,60 @@ func (ese *EnhancedScriptExecutor) ExecuteCommandMode(
 	return commandOutputs, nil
 }
 
+// HandleLocalCommand 处理本地命令
+func (ese *EnhancedScriptExecutor) HandleLocalCommand(command string) (string, error) {
+	// 处理 cd 命令，更新工作目录
+	trimmedCmd := strings.TrimSpace(command)
+	if strings.HasPrefix(strings.ToLower(trimmedCmd), "cd ") {
+		newDir := strings.TrimSpace(strings.TrimPrefix(trimmedCmd, "cd "))
+		if newDir == "" || newDir == "." {
+			// 如果没有指定目录或为当前目录，不改变目录
+			return "", nil
+		}
+
+		// 如果是相对路径，需要拼接当前工作目录
+		if !strings.HasPrefix(newDir, "/") && !strings.HasPrefix(newDir, "\\") &&
+			!strings.HasPrefix(newDir, "C:") && !strings.HasPrefix(newDir, "c:") &&
+			!strings.HasPrefix(newDir, "D:") && !strings.HasPrefix(newDir, "d:") {
+			if ese.currentWorkDir != "" {
+				newDir = filepath.Join(ese.currentWorkDir, newDir)
+			}
+		}
+
+		// 验证目录是否存在
+		info, err := os.Stat(newDir)
+		if err != nil {
+			return "", fmt.Errorf("目录不存在: %s", newDir)
+		}
+		if !info.IsDir() {
+			return "", fmt.Errorf("%s 不是目录", newDir)
+		}
+
+		// 更新当前工作目录
+		ese.currentWorkDir = newDir
+		return fmt.Sprintf("当前目录已切换到: %s", newDir), nil
+	}
+
+	// 执行其他本地命令
+	var cmd *exec.Cmd
+	if ese.currentWorkDir != "" {
+		// 使用当前工作目录执行命令
+		cmd = exec.Command("cmd.exe", "/c", command)
+		cmd.Dir = ese.currentWorkDir
+	} else {
+		cmd = exec.Command("cmd.exe", "/c", command)
+	}
+
+	// 设置隐藏窗口属性，避免执行命令时弹出终端窗口
+	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
+
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return string(output), fmt.Errorf("执行本地命令失败: %v", err)
+	}
+	return string(output), nil
+}
+
 // ExecuteCommands 执行命令列表（保持向后兼容，使用命令模式）
 func (ese *EnhancedScriptExecutor) ExecuteCommands(
 	commands []ParsedCommand,
@@ -408,7 +486,7 @@ type CommandExecutor interface {
 	ExecCommand(serverID, command string) (string, error)
 	ExecUploadFile(serverID, localPath, remotePath string) (string, error)
 	ExecDownloadFile(serverID, remotePath, localPath string) (string, error)
-	EnsureSFTPClient(serverID string) error // 确保SFTP客户端已创建
-	ExecCommandDirect(serverID, command string) (string, error) // 直接执行命令（不通过终端会话）
+	EnsureSFTPClient(serverID string) error                                           // 确保SFTP客户端已创建
+	ExecCommandDirect(serverID, command string) (string, error)                       // 直接执行命令（不通过终端会话）
 	ExecCommandsInSharedSession(serverID string, commands []string) ([]string, error) // 在同一个session中执行多个命令
 }

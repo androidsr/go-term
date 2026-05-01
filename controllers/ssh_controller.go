@@ -324,35 +324,35 @@ func (sc *SSHController) DisconnectFromServer(serverID string) (string, error) {
 	// 使用超时上下文避免死锁
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	
+
 	// 分步操作，避免锁嵌套
-	
+
 	// 1. 先获取连接信息（只读）
 	sc.mutex.RLock()
 	session, hasSession := sc.terminalSessions[serverID]
 	conn, hasConn := sc.connections[serverID]
 	sftpClient, hasSftp := sc.sftpClients[serverID]
 	sc.mutex.RUnlock()
-	
+
 	var errMsgs []string
-	
+
 	// 2. 在无锁状态下关闭资源
 	if hasSession && session != nil {
 		if err := sc.closeSessionWithTimeout(ctx, session); err != nil {
 			errMsgs = append(errMsgs, fmt.Sprintf("关闭终端会话失败: %v", err))
 		}
 	}
-	
+
 	if hasSftp && sftpClient != nil {
 		if err := sftpClient.Close(); err != nil {
 			log.Printf("关闭SFTP客户端警告: %v", err)
 		}
 	}
-	
+
 	if hasConn && conn != nil {
 		conn.Close()
 	}
-	
+
 	// 3. 最后清理数据结构
 	sc.mutex.Lock()
 	if hasSession {
@@ -365,27 +365,27 @@ func (sc *SSHController) DisconnectFromServer(serverID string) (string, error) {
 		delete(sc.connections, serverID)
 	}
 	sc.mutex.Unlock()
-	
+
 	// 清理per-server锁
 	sc.locksMutex.Lock()
 	delete(sc.perServerLocks, serverID)
 	sc.locksMutex.Unlock()
-	
+
 	if len(errMsgs) > 0 {
 		return "", fmt.Errorf("断开连接时发生错误: %s", strings.Join(errMsgs, "; "))
 	}
-	
+
 	return "服务器连接已安全断开", nil
 }
 
 // closeSessionWithTimeout 带超时的会话关闭
 func (sc *SSHController) closeSessionWithTimeout(ctx context.Context, session *services.TerminalSession) error {
 	resultChan := make(chan error, 1)
-	
+
 	go func() {
 		resultChan <- session.Close()
 	}()
-	
+
 	select {
 	case err := <-resultChan:
 		if err != nil && err != io.EOF {
@@ -415,11 +415,11 @@ func (sc *SSHController) isConnectionHealthy(serverID string) bool {
 	sc.mutex.RLock()
 	conn, exists := sc.connections[serverID]
 	sc.mutex.RUnlock()
-	
+
 	if !exists || conn == nil || conn.Client == nil {
 		return false
 	}
-	
+
 	// 简单的连通性检查
 	_, err := conn.Client.NewSession()
 	if err != nil {
@@ -429,7 +429,7 @@ func (sc *SSHController) isConnectionHealthy(serverID string) bool {
 		sc.mutex.Unlock()
 		return false
 	}
-	
+
 	return true
 }
 
@@ -438,7 +438,7 @@ func (sc *SSHController) isSessionActive(session *services.TerminalSession) bool
 	if session == nil || session.OutputChan == nil {
 		return false
 	}
-	
+
 	select {
 	case _, ok := <-session.OutputChan:
 		return ok // 如果channel已关闭，返回false
@@ -455,39 +455,39 @@ func (sc *SSHController) CreateTerminalSession(serverID string) (string, error) 
 	if !sc.isConnectionHealthy(serverID) {
 		return "", fmt.Errorf("服务器连接无效，请重新连接")
 	}
-	
+
 	// 2. 检查现有会话（使用更严格的检查）
 	sc.mutex.RLock()
 	existingSession, exists := sc.terminalSessions[serverID]
 	sc.mutex.RUnlock()
-	
+
 	if exists && existingSession != nil {
 		// 验证会话是否真的有效
 		if sc.isSessionActive(existingSession) {
 			return "终端会话已存在且活跃", nil
 		}
-		
+
 		// 清理无效会话
 		sc.mutex.Lock()
 		delete(sc.terminalSessions, serverID)
 		sc.mutex.Unlock()
 	}
-	
+
 	// 3. 使用无锁方式创建会话
 	sc.mutex.RLock()
 	conn, exists := sc.connections[serverID]
 	sc.mutex.RUnlock()
-	
+
 	if !exists || conn.Client == nil {
 		return "", fmt.Errorf("服务器未连接")
 	}
-	
+
 	// 创建会话（耗时操作，不持锁）
 	terminalSession, err := conn.CreateTerminalSession(80, 24)
 	if err != nil {
 		return "", fmt.Errorf("创建终端会话失败: %v", err)
 	}
-	
+
 	// 4. 原子性存储新会话
 	sc.mutex.Lock()
 	// 最终检查，避免重复创建
@@ -1038,11 +1038,11 @@ func (sc *SSHController) ExecuteBatchScript(scriptID string) (map[string]models.
 		}
 	}
 
-// 并发执行脚本 - 添加并发控制
+	// 并发执行脚本 - 添加并发控制
 	results := make(map[string]models.ScriptExecution)
 	var wg sync.WaitGroup
 	var resultMutex sync.Mutex
-	
+
 	// 并发控制 - 限制最大并发数为10
 	maxConcurrent := 10
 	semaphore := make(chan struct{}, maxConcurrent)
@@ -1051,11 +1051,11 @@ func (sc *SSHController) ExecuteBatchScript(scriptID string) (map[string]models.
 		wg.Add(1)
 		go func(sid string) {
 			defer wg.Done()
-			
+
 			// 获取信号量
 			semaphore <- struct{}{}
 			defer func() { <-semaphore }()
-			
+
 			execution := models.ScriptExecution{
 				ID:             fmt.Sprintf("exec_%s_%s_%d", scriptID, sid, time.Now().Unix()),
 				ScriptID:       scriptID,
@@ -1292,6 +1292,25 @@ func (sc *SSHController) SendScriptToTerminal(scriptID string, serverID string) 
 				// }
 			}
 			// 添加一个小延迟
+			time.Sleep(500 * time.Millisecond)
+			continue
+		}
+
+		// 处理本地命令（在本地执行，不发送到服务器）
+		if parsedCmd.CommandType == "local" {
+			// 在本地执行命令
+			output, err := sc.enhancedExecutor.HandleLocalCommand(parsedCmd.Command)
+			if err != nil {
+				fmt.Printf("本地命令执行失败: %v\n", err)
+			}
+			// 在前端弹出窗口显示本地命令的输出
+			if output != "" {
+				// 使用 runtime.EventsEmit 向前端发送本地命令输出事件
+				runtime.EventsEmit(sc.ctx, "local-command-output", map[string]interface{}{
+					"command": "!" + parsedCmd.Command,
+					"output":  output,
+				})
+			}
 			time.Sleep(500 * time.Millisecond)
 			continue
 		}

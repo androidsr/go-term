@@ -397,17 +397,17 @@ export default {
 
     getContentPlaceholder(executionType) {
       if (executionType === 'script') {
-        return '请输入完整的Shell脚本内容\n示例：\n#!/bin/bash\necho "开始执行脚本"\nfor i in {1..5}\ndo\n  echo "循环 $i"\ndone\n\n# 文件操作会自动处理\n$upload ./config.json /etc/myapp/\n$download /var/log/app.log ./logs/\necho "文件操作完成"';
+        return '请输入完整的Shell脚本内容\n示例：\n#!/bin/bash\necho "开始执行脚本"\nfor i in {1..5}\ndo\n  echo "循环 $i"\ndone\n\n# 本地命令（以 ! 开头）在本地执行，不会发送到服务器\n!echo "这是本地命令"\n!dir\n\n# 文件操作会自动处理\n$upload ./config.json /etc/myapp/\n$download /var/log/app.log ./logs/\necho "文件操作完成"';
       } else {
-        return '请输入要执行的Shell命令\n示例：\necho "Hello World"\nls -la\npwd\n\n# 文件操作示例\n$upload ./dist.tar.gz /tmp/\n$download /var/backup/db.sql ./backup/';
+        return '请输入要执行的Shell命令\n示例：\necho "Hello World"\nls -la\npwd\n\n# 本地命令（以 ! 开头）在本地执行，不会发送到服务器\n!echo "这是本地命令"\n!dir\n\n# 文件操作示例\n$upload ./dist.tar.gz /tmp/\n$download /var/backup/db.sql ./backup/';
       }
     },
 
     getContentHelp(executionType) {
       if (executionType === 'script') {
-        return '<strong>脚本模式：</strong>整个脚本将作为Shell脚本执行，支持文件操作。当脚本包含文件操作时会自动切换到混合执行模式。<br><strong>文件操作：</strong>支持 $upload 本地路径 远程路径 和 $download 远程路径 本地路径';
+        return '<strong>脚本模式：</strong>整个脚本将作为Shell脚本执行，支持文件操作和本地命令。当脚本包含文件操作或本地命令时会自动切换到混合执行模式。<br><strong>文件操作：</strong>支持 $upload 本地路径 远程路径 和 $download 远程路径 本地路径<br><strong>本地命令：</strong>以 ! 开头的命令在本地执行，不会发送到服务器，如 !dir 或 !echo "hello"';
       } else {
-        return '<strong>命令模式：</strong>每行命令将单独执行，遇到失败命令时停止后续执行。适合执行独立的命令序列。<br><strong>文件操作：</strong>支持 $upload 本地路径 远程路径 和 $download 远程路径 本地路径';
+        return '<strong>命令模式：</strong>每行命令将单独执行，遇到失败命令时停止后续执行。适合执行独立的命令序列。<br><strong>文件操作：</strong>支持 $upload 本地路径 远程路径 和 $download 远程路径 本地路径<br><strong>本地命令：</strong>以 ! 开头的命令在本地执行，不会发送到服务器，如 !dir 或 !echo "hello"';
       }
     },
 

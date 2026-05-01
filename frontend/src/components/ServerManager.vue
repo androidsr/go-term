@@ -127,6 +127,22 @@
         </a-form-item>
       </a-form>
     </a-modal>
+
+    <!-- 本地命令输出弹窗 -->
+    <a-modal v-model:open="localCommandOutputVisible" title="本地命令输出" width="800px" :footer="null" :bodyStyle="{ maxHeight: '60vh', overflow: 'hidden' }">
+      <div class="local-command-output">
+        <div class="command-header">
+          <strong>命令:</strong>
+          <code>{{ localCommandOutput.command }}</code>
+        </div>
+        <div class="output-container">
+          <div class="output-header">
+            <strong>输出:</strong>
+          </div>
+          <pre class="output-content">{{ localCommandOutput.output }}</pre>
+        </div>
+      </div>
+    </a-modal>
   </div>
 </template>
 
@@ -147,6 +163,7 @@ import {
   HandleFileDownloadRequest,
   SendScriptToTerminal,
 } from '../../wailsjs/go/controllers/SSHController';
+import { EventsOn, EventsOff } from '../../wailsjs/runtime/runtime';
 import Terminal from './Terminal.vue';
 import FileManager from './FileManager.vue';
 import BatchScriptManager from './BatchScriptManager.vue';
@@ -184,6 +201,13 @@ export default {
       terminalTabs: [],
       closedSessions: new Set(),
       pendingScript: null, // 添加待处理脚本的存储
+
+      // 本地命令输出弹窗
+      localCommandOutputVisible: false,
+      localCommandOutput: {
+        command: '',
+        output: ''
+      },
 
       // 分组模态框
       groupModalVisible: false,
@@ -223,6 +247,8 @@ export default {
     window.addEventListener('file-operation-error', this.handleFileOperationError);
     // 添加对文件操作成功的监听
     window.addEventListener('file-operation-success', this.handleFileOperationSuccess);
+    // 添加对本地命令输出的监听（使用 Wails 事件系统）
+    EventsOn('local-command-output', this.handleLocalCommandOutput);
   },
 
   beforeUnmount() {
@@ -232,6 +258,8 @@ export default {
     window.removeEventListener('file-operation-error', this.handleFileOperationError);
     // 移除文件操作成功监听
     window.removeEventListener('file-operation-success', this.handleFileOperationSuccess);
+    // 移除本地命令输出监听（使用 Wails 事件系统）
+    EventsOff('local-command-output');
   },
 
   methods: {
@@ -676,6 +704,16 @@ export default {
       this.$message.success(message);
     },
 
+    // 处理本地命令输出
+    handleLocalCommandOutput(data) {
+      const { command, output } = data;
+      this.localCommandOutput = {
+        command: command,
+        output: output
+      };
+      this.localCommandOutputVisible = true;
+    },
+
     // 处理文件操作错误
     handleFileOperationError(event) {
       const { type, localPath, remotePath, error } = event.detail;
@@ -726,5 +764,45 @@ export default {
 
 .content {
   padding: 16px;
+}
+
+/* 本地命令输出弹窗样式 */
+.local-command-output {
+  padding: 8px;
+}
+
+.command-header {
+  margin-bottom: 12px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid #e8e8e8;
+}
+
+.command-header code {
+  margin-left: 8px;
+  color: #1890ff;
+}
+
+.output-container {
+  max-height: 55vh;
+  overflow-y: auto;
+}
+
+.output-header {
+  margin-bottom: 8px;
+}
+
+.output-content {
+  margin: 0;
+  padding: 12px;
+  background-color: #1f1f1f;
+  color: #e8e8e8;
+  border-radius: 4px;
+  font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', 'Consolas', monospace;
+  font-size: 13px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-all;
+  max-height: 50vh;
+  overflow-y: auto;
 }
 </style>
