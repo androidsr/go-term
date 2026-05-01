@@ -131,15 +131,18 @@
     <!-- 本地命令输出弹窗 -->
     <a-modal v-model:open="localCommandOutputVisible" title="本地命令输出" width="800px" :footer="null" :bodyStyle="{ maxHeight: '60vh', overflow: 'hidden' }">
       <div class="local-command-output">
-        <div class="command-header">
-          <strong>命令:</strong>
-          <code>{{ localCommandOutput.command }}</code>
-        </div>
         <div class="output-container">
-          <div class="output-header">
-            <strong>输出:</strong>
+          <div v-for="(item, index) in localCommandOutputs" :key="index" class="command-item">
+            <div class="command-header">
+              <span class="command-number">[{{ index + 1 }}]</span>
+              <strong>命令:</strong>
+              <code>{{ item.command }}</code>
+            </div>
+            <div class="output-header">
+              <strong>输出:</strong>
+            </div>
+            <pre class="output-content">{{ item.output }}</pre>
           </div>
-          <pre class="output-content">{{ localCommandOutput.output }}</pre>
         </div>
       </div>
     </a-modal>
@@ -204,10 +207,7 @@ export default {
 
       // 本地命令输出弹窗
       localCommandOutputVisible: false,
-      localCommandOutput: {
-        command: '',
-        output: ''
-      },
+      localCommandOutputs: [], // 累积存储所有本地命令的输出
 
       // 分组模态框
       groupModalVisible: false,
@@ -591,6 +591,9 @@ export default {
 
     // 处理终端执行脚本的请求
     async handleExecuteScriptInTerminal(event) {
+      // 清空之前的本地命令输出历史记录
+      this.localCommandOutputs = [];
+      
       const script = event.detail.script;
 
       // 选择服务器（这里选择第一个服务器，实际应用中可能需要用户选择）
@@ -707,10 +710,12 @@ export default {
     // 处理本地命令输出
     handleLocalCommandOutput(data) {
       const { command, output } = data;
-      this.localCommandOutput = {
+      // 累积添加到历史记录
+      this.localCommandOutputs.push({
         command: command,
         output: output
-      };
+      });
+      // 打开弹窗（如果还没打开）
       this.localCommandOutputVisible = true;
     },
 
@@ -771,24 +776,49 @@ export default {
   padding: 8px;
 }
 
+.output-container {
+  max-height: 60vh;
+  overflow-y: auto;
+}
+
+.command-item {
+  margin-bottom: 20px;
+  padding-bottom: 16px;
+  border-bottom: 1px dashed #d9d9d9;
+}
+
+.command-item:last-child {
+  margin-bottom: 0;
+  padding-bottom: 0;
+  border-bottom: none;
+}
+
 .command-header {
-  margin-bottom: 12px;
-  padding-bottom: 8px;
-  border-bottom: 1px solid #e8e8e8;
+  margin-bottom: 8px;
+}
+
+.command-number {
+  display: inline-block;
+  width: 24px;
+  height: 24px;
+  line-height: 24px;
+  text-align: center;
+  background-color: #1890ff;
+  color: white;
+  border-radius: 50%;
+  font-size: 12px;
+  margin-right: 8px;
 }
 
 .command-header code {
   margin-left: 8px;
   color: #1890ff;
-}
-
-.output-container {
-  max-height: 55vh;
-  overflow-y: auto;
+  font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', 'Consolas', monospace;
 }
 
 .output-header {
   margin-bottom: 8px;
+  color: #666;
 }
 
 .output-content {
@@ -802,7 +832,7 @@ export default {
   line-height: 1.5;
   white-space: pre-wrap;
   word-break: break-all;
-  max-height: 50vh;
+  max-height: 40vh;
   overflow-y: auto;
 }
 </style>

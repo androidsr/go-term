@@ -1302,15 +1302,19 @@ func (sc *SSHController) SendScriptToTerminal(scriptID string, serverID string) 
 			output, err := sc.enhancedExecutor.HandleLocalCommand(parsedCmd.Command)
 			if err != nil {
 				fmt.Printf("本地命令执行失败: %v\n", err)
+				// 即使有错误也要显示命令
+				output = fmt.Sprintf("执行错误: %v", err)
 			}
 			// 在前端弹出窗口显示本地命令的输出
-			if output != "" {
-				// 使用 runtime.EventsEmit 向前端发送本地命令输出事件
-				runtime.EventsEmit(sc.ctx, "local-command-output", map[string]interface{}{
-					"command": "!" + parsedCmd.Command,
-					"output":  output,
-				})
+			// 始终发送事件，即使没有输出也显示命令
+			displayOutput := output
+			if displayOutput == "" {
+				displayOutput = "(无输出)"
 			}
+			runtime.EventsEmit(sc.ctx, "local-command-output", map[string]interface{}{
+				"command": "!" + parsedCmd.Command,
+				"output":  displayOutput,
+			})
 			time.Sleep(500 * time.Millisecond)
 			continue
 		}
