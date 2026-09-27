@@ -65,3 +65,91 @@ export class FileInfo {
         return new FileInfo(/** @type {Partial<FileInfo>} */($$parsedSource));
     }
 }
+
+/**
+ * PortForward 端口转发配置。
+ * Type:
+ *   - "local"  : 本地监听 LocalAddr，流量转发到远端 RemoteHost:RemotePort
+ *   - "remote" : 远端监听 RemoteAddr，流量转发到本地 LocalAddr（反向隧道）
+ */
+export class PortForward {
+    /**
+     * Creates a new PortForward instance.
+     * @param {Partial<PortForward>} [$$source = {}] - The source object to create the PortForward.
+     */
+    constructor($$source = {}) {
+        if (!("id" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["id"] = "";
+        }
+        if (!("serverId" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["serverId"] = "";
+        }
+        if (!("type" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["type"] = "";
+        }
+        if (!("localAddr" in $$source)) {
+            /**
+             * 本地地址，如 127.0.0.1:8080
+             * @member
+             * @type {string}
+             */
+            this["localAddr"] = "";
+        }
+        if (!("remoteHost" in $$source)) {
+            /**
+             * 远端目标主机（local 用）
+             * @member
+             * @type {string}
+             */
+            this["remoteHost"] = "";
+        }
+        if (!("remotePort" in $$source)) {
+            /**
+             * 远端目标端口（local 用）
+             * @member
+             * @type {string}
+             */
+            this["remotePort"] = "";
+        }
+        if (!("remoteAddr" in $$source)) {
+            /**
+             * 远端监听地址（remote 用）
+             * @member
+             * @type {string}
+             */
+            this["remoteAddr"] = "";
+        }
+        if (!("status" in $$source)) {
+            /**
+             * active / stopped
+             * @member
+             * @type {string}
+             */
+            this["status"] = "";
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new PortForward instance from a string or object.
+     * @param {any} [$$source = {}]
+     * @returns {PortForward}
+     */
+    static createFrom($$source = {}) {
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        return new PortForward(/** @type {Partial<PortForward>} */($$parsedSource));
+    }
+}

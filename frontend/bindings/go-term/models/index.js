@@ -8,5 +8,6 @@ export {
     OpsConfig,
     ScriptExecution,
     Server,
-    ServerGroup
+    ServerGroup,
+    Snippet
 } from "./models.js";

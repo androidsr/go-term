@@ -28,12 +28,32 @@ export function AddBatchScript(script) {
 }
 
 /**
+ * AddCommandHistory 追加命令历史
+ * @param {string} serverID
+ * @param {string} command
+ * @returns {$CancellablePromise<void>}
+ */
+export function AddCommandHistory(serverID, command) {
+    return $Call.ByID(3168375420, serverID, command);
+}
+
+/**
  * AddOpsConfig 新增运维配置
  * @param {models$0.OpsConfig} cfg
  * @returns {$CancellablePromise<void>}
  */
 export function AddOpsConfig(cfg) {
     return $Call.ByID(3916522155, cfg);
+}
+
+/**
+ * AddPortForward 新增并启动端口转发
+ * @param {string} serverID
+ * @param {services$0.PortForward} fwd
+ * @returns {$CancellablePromise<string>}
+ */
+export function AddPortForward(serverID, fwd) {
+    return $Call.ByID(123291269, serverID, fwd);
 }
 
 /**
@@ -56,6 +76,24 @@ export function AddServerGroup(group) {
 }
 
 /**
+ * AddSnippet 新增片段
+ * @param {models$0.Snippet} s
+ * @returns {$CancellablePromise<void>}
+ */
+export function AddSnippet(s) {
+    return $Call.ByID(1097810180, s);
+}
+
+/**
+ * ClearCommandHistory 清空命令历史
+ * @param {string} serverID
+ * @returns {$CancellablePromise<void>}
+ */
+export function ClearCommandHistory(serverID) {
+    return $Call.ByID(6953934, serverID);
+}
+
+/**
  * ClearTerminalOutputBuffer 清空终端输出缓冲区
  * @param {string} sessionID
  * @returns {$CancellablePromise<void>}
@@ -74,7 +112,16 @@ export function CloseTerminalSession(sessionID) {
 }
 
 /**
- * ConnectToServer 连接到服务器
+ * ConnectByURI 解析 ssh://user[:pass]@host[:port] 或 user@host:port 一键直连（临时入库）
+ * @param {string} uri
+ * @returns {$CancellablePromise<string>}
+ */
+export function ConnectByURI(uri) {
+    return $Call.ByID(2400119115, uri);
+}
+
+/**
+ * ConnectToServer 连接到服务器（支持通过跳板机代理连接）
  * @param {string} serverID
  * @returns {$CancellablePromise<string>}
  */
@@ -161,6 +208,15 @@ export function DeleteServerGroup(groupID) {
 }
 
 /**
+ * DeleteSnippet 删除片段
+ * @param {string} id
+ * @returns {$CancellablePromise<void>}
+ */
+export function DeleteSnippet(id) {
+    return $Call.ByID(1063201812, id);
+}
+
+/**
  * DisconnectFromServer 断开服务器连接 - 修复死锁版本
  * @param {string} serverID
  * @returns {$CancellablePromise<string>}
@@ -190,6 +246,16 @@ export function DownloadFile(serverID, remotePath, localPath) {
  */
 export function DownloadFileWithProgress(serverID, taskID, remotePath, localPath) {
     return $Call.ByID(169134777, serverID, taskID, remotePath, localPath);
+}
+
+/**
+ * EnableAutoReconnect 设置某服务器是否启用自动重连；关闭时取消正在进行的重连
+ * @param {string} serverID
+ * @param {boolean} enabled
+ * @returns {$CancellablePromise<void>}
+ */
+export function EnableAutoReconnect(serverID, enabled) {
+    return $Call.ByID(1505408933, serverID, enabled);
 }
 
 /**
@@ -295,12 +361,32 @@ export function GetAutoCompleteSuggestions(sessionID, partialCommand) {
 }
 
 /**
+ * GetAutoReconnect 获取某服务器是否启用自动重连
+ * @param {string} serverID
+ * @returns {$CancellablePromise<boolean>}
+ */
+export function GetAutoReconnect(serverID) {
+    return $Call.ByID(3265724860, serverID);
+}
+
+/**
  * GetBatchScripts 获取所有批量脚本
  * @returns {$CancellablePromise<models$0.BatchScript[]>}
  */
 export function GetBatchScripts() {
     return $Call.ByID(2440137272).then(/** @type {($result: any) => any} */(($result) => {
         return $$createType4($result);
+    }));
+}
+
+/**
+ * GetCommandHistory 获取命令历史
+ * @param {string} serverID
+ * @returns {$CancellablePromise<string[]>}
+ */
+export function GetCommandHistory(serverID) {
+    return $Call.ByID(1648454059, serverID).then(/** @type {($result: any) => any} */(($result) => {
+        return $$createType0($result);
     }));
 }
 
@@ -351,6 +437,16 @@ export function GetServerConnectionStatus() {
 export function GetServerGroups() {
     return $Call.ByID(2482326835).then(/** @type {($result: any) => any} */(($result) => {
         return $$createType9($result);
+    }));
+}
+
+/**
+ * GetSnippets 获取全部片段
+ * @returns {$CancellablePromise<models$0.Snippet[]>}
+ */
+export function GetSnippets() {
+    return $Call.ByID(591445970).then(/** @type {($result: any) => any} */(($result) => {
+        return $$createType11($result);
     }));
 }
 
@@ -411,7 +507,18 @@ export function IsTerminalSessionActive(sessionID) {
  */
 export function ListDirectory(serverID, path) {
     return $Call.ByID(308139975, serverID, path).then(/** @type {($result: any) => any} */(($result) => {
-        return $$createType11($result);
+        return $$createType13($result);
+    }));
+}
+
+/**
+ * ListPortForwards 列出端口转发
+ * @param {string} serverID
+ * @returns {$CancellablePromise<services$0.PortForward[]>}
+ */
+export function ListPortForwards(serverID) {
+    return $Call.ByID(2715024629, serverID).then(/** @type {($result: any) => any} */(($result) => {
+        return $$createType15($result);
     }));
 }
 
@@ -422,6 +529,15 @@ export function ListDirectory(serverID, path) {
  */
 export function ReadTerminalOutput(sessionID) {
     return $Call.ByID(1298257821, sessionID);
+}
+
+/**
+ * RemovePortForward 移除端口转发
+ * @param {string} id
+ * @returns {$CancellablePromise<void>}
+ */
+export function RemovePortForward(id) {
+    return $Call.ByID(4015633628, id);
 }
 
 /**
@@ -493,6 +609,15 @@ export function UpdateServerGroup(group) {
 }
 
 /**
+ * UpdateSnippet 更新片段
+ * @param {models$0.Snippet} s
+ * @returns {$CancellablePromise<void>}
+ */
+export function UpdateSnippet(s) {
+    return $Call.ByID(1275524206, s);
+}
+
+/**
  * UploadFile 上传文件
  * @param {string} serverID
  * @param {string} localPath
@@ -526,5 +651,9 @@ const $$createType6 = $Create.Array($$createType5);
 const $$createType7 = $Create.Map($Create.Any, $Create.Any);
 const $$createType8 = models$0.ServerGroup.createFrom;
 const $$createType9 = $Create.Array($$createType8);
-const $$createType10 = services$0.FileInfo.createFrom;
+const $$createType10 = models$0.Snippet.createFrom;
 const $$createType11 = $Create.Array($$createType10);
+const $$createType12 = services$0.FileInfo.createFrom;
+const $$createType13 = $Create.Array($$createType12);
+const $$createType14 = services$0.PortForward.createFrom;
+const $$createType15 = $Create.Array($$createType14);

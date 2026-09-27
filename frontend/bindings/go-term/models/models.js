@@ -414,6 +414,14 @@ export class Server {
              */
             this["note"] = "";
         }
+        if (!("proxyJumpServerId" in $$source)) {
+            /**
+             * ProxyJumpServerID 跳板机：通过此已连接服务器代理连接本服务器（为空表示直连）
+             * @member
+             * @type {string}
+             */
+            this["proxyJumpServerId"] = "";
+        }
 
         Object.assign(this, $$source);
     }
@@ -475,6 +483,73 @@ export class ServerGroup {
             $$parsedSource["servers"] = $$createField2_0($$parsedSource["servers"]);
         }
         return new ServerGroup(/** @type {Partial<ServerGroup>} */($$parsedSource));
+    }
+}
+
+/**
+ * Snippet 命令片段：保存常用命令，可一键发送到终端。
+ */
+export class Snippet {
+    /**
+     * Creates a new Snippet instance.
+     * @param {Partial<Snippet>} [$$source = {}] - The source object to create the Snippet.
+     */
+    constructor($$source = {}) {
+        if (!("id" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["id"] = "";
+        }
+        if (!("name" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["name"] = "";
+        }
+        if (!("content" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["content"] = "";
+        }
+        if (!("serverId" in $$source)) {
+            /**
+             * 可选：关联服务器（为空表示通用）
+             * @member
+             * @type {string}
+             */
+            this["serverId"] = "";
+        }
+        if (!("createdAt" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["createdAt"] = "";
+        }
+        if (!("updatedAt" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["updatedAt"] = "";
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new Snippet instance from a string or object.
+     * @param {any} [$$source = {}]
+     * @returns {Snippet}
+     */
+    static createFrom($$source = {}) {
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        return new Snippet(/** @type {Partial<Snippet>} */($$parsedSource));
     }
 }
 

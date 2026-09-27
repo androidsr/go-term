@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"io/ioutil"
+	"net"
 	"os"
 	"strings"
 	"time"
@@ -63,6 +64,54 @@ func (s *SSHConnection) Connect(host string, port int, username string, password
 
 	s.Client = client
 	return nil
+}
+
+// ConnectWithProxy 通过跳板机连接：使用已有跳板机的 ssh.Client 作为隧道建立到目标主机的连接
+func (s *SSHConnection) ConnectWithProxy(host string, port int, username, password, keyFile string, proxyClient *ssh.Client) error {
+	var auth []ssh.AuthMethod
+
+	if keyFile != "" {
+		key, err := ioutil.ReadFile(keyFile)
+		if err != nil {
+			return fmt.Errorf("无法读取密钥文件: %v", err)
+		}
+		signer, err := ssh.ParsePrivateKey(key)
+		if err != nil {
+			return fmt.Errorf("无法解析私钥: %v", err)
+		}
+		auth = append(auth, ssh.PublicKeys(signer))
+	} else {
+		auth = append(auth, ssh.Password(password))
+	}
+
+	config := &ssh.ClientConfig{
+		User:            username,
+		Auth:            auth,
+		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
+		Timeout:         30 * time.Second,
+	}
+
+	address := fmt.Sprintf("%s:%d", host, port)
+	// 通过跳板机的 Dial 建立到目标主机的 TCP 隧道
+	conn, err := proxyClient.Dial("tcp", address)
+	if err != nil {
+		return fmt.Errorf("通过跳板机连接目标服务器失败: %v", err)
+	}
+	ncc, chans, reqs, err := ssh.NewClientConn(conn, address, config)
+	if err != nil {
+		conn.Close()
+		return fmt.Errorf("建立 SSH 客户端失败: %v", err)
+	}
+	s.Client = ssh.NewClient(ncc, chans, reqs)
+	return nil
+}
+
+// Dial 通过已建立的连接拨号（供端口转发使用）
+func (s *SSHConnection) Dial(network, addr string) (net.Conn, error) {
+	if s.Client == nil {
+		return nil, fmt.Errorf("SSH连接未建立")
+	}
+	return s.Client.Dial(network, addr)
 }
 
 // ExecuteCommand 执行远程命令

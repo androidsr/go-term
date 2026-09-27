@@ -2,10 +2,13 @@ package controllers
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log"
 	"os"
+	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -42,6 +45,18 @@ type SSHController struct {
 	opsConfigManager *services.OpsConfigManager
 	lastPaths        *services.LastPathStore
 
+	// 命令历史 / 片段库 / 端口转发
+	commandHistory  *services.CommandHistoryStore
+	snippetManager  *services.SnippetManager
+	portForwardMgr  *services.PortForwardManager
+	portForwardCfgs map[string][]services.PortForward // serverID -> 转发配置（持久化，连接后自动恢复）
+	pfMutex         sync.Mutex
+
+	// 自动重连
+	reconnectMu    sync.Mutex
+	reconnectState map[string]*reconnectInfo
+	autoReconnect  map[string]bool // serverID -> 是否启用自动重连（持久化）
+
 	// 全局用于保护 map 的读写（短时持有）
 	mutex sync.RWMutex
 
@@ -55,6 +70,68 @@ type SSHController struct {
 	// 连接健康检查取消函数
 	healthMu     sync.Mutex
 	healthCancel map[string]context.CancelFunc
+}
+
+// reconnectInfo 自动重连运行时信息
+type reconnectInfo struct {
+	enabled  bool
+	attempts int
+	cancel   context.CancelFunc
+}
+
+// loadPortForwardConfigs 加载持久化的端口转发配置
+func (sc *SSHController) loadPortForwardConfigs() {
+	data, err := os.ReadFile("config/portforwards.json")
+	if err != nil {
+		return
+	}
+	var loaded map[string][]services.PortForward
+	if err := json.Unmarshal(data, &loaded); err == nil {
+		sc.pfMutex.Lock()
+		sc.portForwardCfgs = loaded
+		sc.pfMutex.Unlock()
+	}
+}
+
+// savePortForwardConfigs 持久化端口转发配置
+func (sc *SSHController) savePortForwardConfigs() error {
+	sc.pfMutex.Lock()
+	defer sc.pfMutex.Unlock()
+	data, err := json.MarshalIndent(sc.portForwardCfgs, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile("config/portforwards.json", data, 0644)
+}
+
+// saveAutoReconnect 持久化自动重连开关
+func (sc *SSHController) saveAutoReconnect() error {
+	sc.reconnectMu.Lock()
+	defer sc.reconnectMu.Unlock()
+	data, err := json.MarshalIndent(sc.autoReconnect, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile("config/autoreconnect.json", data, 0644)
+}
+
+// loadAutoReconnect 加载自动重连开关
+func (sc *SSHController) loadAutoReconnect() {
+	data, err := os.ReadFile("config/autoreconnect.json")
+	if err != nil {
+		return
+	}
+	var loaded map[string]bool
+	if err := json.Unmarshal(data, &loaded); err == nil {
+		sc.autoReconnect = loaded
+	}
+}
+
+// isAutoReconnectEnabled 是否启用自动重连
+func (sc *SSHController) isAutoReconnectEnabled(serverID string) bool {
+	sc.reconnectMu.Lock()
+	defer sc.reconnectMu.Unlock()
+	return sc.autoReconnect[serverID]
 }
 
 // NewSSHController 创建新的SSH控制器
@@ -81,6 +158,12 @@ func NewSSHController(app *application.App) *SSHController {
 		encryptionPassword: password,
 		opsConfigManager:   services.NewOpsConfigManager(),
 		lastPaths:          services.NewLastPathStore(),
+		commandHistory:     services.NewCommandHistoryStore(),
+		snippetManager:     services.NewSnippetManager(),
+		portForwardMgr:     services.NewPortForwardManager(),
+		portForwardCfgs:    make(map[string][]services.PortForward),
+		reconnectState:     make(map[string]*reconnectInfo),
+		autoReconnect:      make(map[string]bool),
 		healthCancel:       make(map[string]context.CancelFunc),
 	}
 }
@@ -145,6 +228,16 @@ func (sc *SSHController) ServiceStartup(ctx context.Context, options application
 		fmt.Printf("警告: 无法加载上次路径记录: %v\n", err)
 	}
 
+	// 加载命令历史 / 片段库 / 端口转发配置 / 自动重连开关
+	if err := sc.commandHistory.Load("config/command_history.json"); err != nil {
+		fmt.Printf("警告: 无法加载命令历史: %v\n", err)
+	}
+	if err := sc.snippetManager.Load("config/snippets.json"); err != nil {
+		fmt.Printf("警告: 无法加载片段库: %v\n", err)
+	}
+	sc.loadPortForwardConfigs()
+	sc.loadAutoReconnect()
+
 	return nil
 }
 
@@ -152,6 +245,10 @@ func (sc *SSHController) ServiceStartup(ctx context.Context, options application
 func (sc *SSHController) ServiceShutdown(ctx context.Context, options application.ServiceOptions) error {
 	_ = sc.opsConfigManager.SaveToFile("config/opsconfig.json")
 	_ = sc.lastPaths.Save("config/lastpaths.json")
+	_ = sc.commandHistory.Save()
+	_ = sc.snippetManager.Save()
+	_ = sc.savePortForwardConfigs()
+	_ = sc.saveAutoReconnect()
 	return nil
 }
 
@@ -279,7 +376,7 @@ func (sc *SSHController) DeleteServer(groupID, serverID string) error {
 	return sc.saveConfig()
 }
 
-// ConnectToServer 连接到服务器
+// ConnectToServer 连接到服务器（支持通过跳板机代理连接）
 func (sc *SSHController) ConnectToServer(serverID string) (string, error) {
 	// 先读取服务器配置 & 当前连接状态（短锁）
 	sc.mutex.RLock()
@@ -290,7 +387,7 @@ func (sc *SSHController) ConnectToServer(serverID string) (string, error) {
 		return "已连接到服务器", nil
 	}
 
-	// 从 serverManager 获取 server 信息（此处使用方法可能会读取内部数据结构；serverManager 本身应保证并发安全）
+	// 从 serverManager 获取 server 信息
 	server, err := sc.serverManager.GetServerByID(serverID)
 	if err != nil {
 		return "", fmt.Errorf("无法找到服务器: %v", err)
@@ -298,17 +395,29 @@ func (sc *SSHController) ConnectToServer(serverID string) (string, error) {
 
 	// 创建连接是在无全局锁下进行的耗时 IO
 	connection := &services.SSHConnection{}
-	if err := connection.Connect(server.Host, server.Port, server.Username, server.Password, server.KeyFile); err != nil {
-		return "", fmt.Errorf("连接失败: %v", err)
+	if server.ProxyJumpServerID != "" {
+		// 通过跳板机代理连接
+		sc.mutex.RLock()
+		proxyConn, ok := sc.connections[server.ProxyJumpServerID]
+		sc.mutex.RUnlock()
+		if !ok || proxyConn == nil || proxyConn.Client == nil {
+			return "", fmt.Errorf("跳板机尚未连接，请先连接跳板机服务器")
+		}
+		if err := connection.ConnectWithProxy(server.Host, server.Port, server.Username, server.Password, server.KeyFile, proxyConn.Client); err != nil {
+			return "", fmt.Errorf("通过跳板机连接失败: %v", err)
+		}
+	} else {
+		if err := connection.Connect(server.Host, server.Port, server.Username, server.Password, server.KeyFile); err != nil {
+			return "", fmt.Errorf("连接失败: %v", err)
+		}
 	}
 
 	// 成功后将连接写入 map（短锁）
 	sc.mutex.Lock()
 	// double-check 避免竞态：可能在我们创建期间别人已创建
 	if existing, ok := sc.connections[serverID]; ok && existing.Client != nil {
-		// 我们的 connection 多余，先 close 掉自己（如果实现需要）
+		// 我们的 connection 多余，先 close 掉自己
 		sc.mutex.Unlock()
-		// 尝试关闭新创建的 connection 以释放资源（忽略返回错误）
 		connection.Close()
 		return "已连接到服务器", nil
 	}
@@ -317,6 +426,9 @@ func (sc *SSHController) ConnectToServer(serverID string) (string, error) {
 
 	// 启动连接健康检查
 	sc.startHealthMonitor(serverID)
+
+	// 恢复该服务器保存的端口转发
+	sc.restorePortForwards(serverID)
 
 	return "连接成功", nil
 }
@@ -342,6 +454,20 @@ func (sc *SSHController) ExecuteCommand(serverID, command string) (string, error
 func (sc *SSHController) DisconnectFromServer(serverID string) (string, error) {
 	// 停止健康检查
 	sc.stopHealthMonitor(serverID)
+
+	// 停止该服务器下的端口转发
+	sc.portForwardMgr.StopAll(serverID)
+
+	// 取消正在进行的自动重连
+	sc.reconnectMu.Lock()
+	if info, ok := sc.reconnectState[serverID]; ok {
+		info.enabled = false
+		if info.cancel != nil {
+			info.cancel()
+		}
+		delete(sc.reconnectState, serverID)
+	}
+	sc.reconnectMu.Unlock()
 
 	// 使用超时上下文避免死锁
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -1039,7 +1165,7 @@ func (sc *SSHController) stopHealthMonitor(serverID string) {
 	sc.healthMu.Unlock()
 }
 
-// handleConnectionLost 连接断开时的统一处理：清理资源并通知前端
+// handleConnectionLost 连接断开时的统一处理：清理资源，并按配置决定是否自动重连
 func (sc *SSHController) handleConnectionLost(serverID string) {
 	sc.stopHealthMonitor(serverID)
 
@@ -1058,13 +1184,173 @@ func (sc *SSHController) handleConnectionLost(serverID string) {
 	}
 	sc.mutex.Unlock()
 
-	// 通知前端该服务器连接已丢失
+	// 自动重连开启则进入重连流程（保留前端标签，避免误关）；否则通知前端断开
+	if sc.isAutoReconnectEnabled(serverID) {
+		sc.reconnectMu.Lock()
+		sc.reconnectState[serverID] = &reconnectInfo{enabled: true}
+		sc.reconnectMu.Unlock()
+		if sc.app != nil {
+			sc.app.Event.Emit("reconnecting", map[string]interface{}{
+				"serverID": serverID,
+				"attempt":  1,
+				"reason":   "连接已断开，正在尝试自动重连…",
+			})
+		}
+		go sc.attemptReconnect(serverID)
+		return
+	}
+
+	sc.emitConnectionLost(serverID, "服务器连接已断开（网络中断或远端关闭）")
+}
+
+// emitConnectionLost 通知前端连接已彻底断开
+func (sc *SSHController) emitConnectionLost(serverID, reason string) {
 	if sc.app != nil {
 		sc.app.Event.Emit("connection-lost", map[string]interface{}{
 			"serverID": serverID,
-			"reason":   "服务器连接已断开（网络中断或远端关闭）",
+			"reason":   reason,
 		})
 	}
+}
+
+// restorePortForwards 连接成功后恢复该服务器保存的端口转发
+func (sc *SSHController) restorePortForwards(serverID string) {
+	sc.pfMutex.Lock()
+	cfgs := sc.portForwardCfgs[serverID]
+	sc.pfMutex.Unlock()
+	sc.mutex.RLock()
+	conn := sc.connections[serverID]
+	sc.mutex.RUnlock()
+	if conn == nil || conn.Client == nil || len(cfgs) == 0 {
+		return
+	}
+	for _, fwd := range cfgs {
+		_ = sc.portForwardMgr.Start(conn.Client, fwd)
+	}
+}
+
+// EnableAutoReconnect 设置某服务器是否启用自动重连；关闭时取消正在进行的重连
+func (sc *SSHController) EnableAutoReconnect(serverID string, enabled bool) error {
+	sc.reconnectMu.Lock()
+	if enabled {
+		sc.autoReconnect[serverID] = true
+	} else {
+		delete(sc.autoReconnect, serverID)
+		if info, ok := sc.reconnectState[serverID]; ok {
+			info.enabled = false
+			if info.cancel != nil {
+				info.cancel()
+			}
+		}
+		delete(sc.reconnectState, serverID)
+	}
+	sc.reconnectMu.Unlock()
+	_ = sc.saveAutoReconnect()
+	return nil
+}
+
+// GetAutoReconnect 获取某服务器是否启用自动重连
+func (sc *SSHController) GetAutoReconnect(serverID string) bool {
+	return sc.isAutoReconnectEnabled(serverID)
+}
+
+// attemptReconnect 按指数退避自动重连，成功后恢复转发与监控
+func (sc *SSHController) attemptReconnect(serverID string) {
+	server, err := sc.serverManager.GetServerByID(serverID)
+	if err != nil {
+		sc.reconnectMu.Lock()
+		delete(sc.reconnectState, serverID)
+		sc.reconnectMu.Unlock()
+		sc.emitConnectionLost(serverID, "服务器配置丢失，无法重连")
+		return
+	}
+	maxAttempts := 8
+	backoff := 2 * time.Second
+	for i := 1; i <= maxAttempts; i++ {
+		// 检查是否被取消 / 已被手动恢复
+		sc.reconnectMu.Lock()
+		info := sc.reconnectState[serverID]
+		if info == nil || !info.enabled {
+			sc.reconnectMu.Unlock()
+			return
+		}
+		info.attempts = i
+		sc.reconnectMu.Unlock()
+
+		// 若连接已被手动恢复，直接结束
+		sc.mutex.RLock()
+		_, already := sc.connections[serverID]
+		sc.mutex.RUnlock()
+		if already {
+			sc.reconnectMu.Lock()
+			delete(sc.reconnectState, serverID)
+			sc.reconnectMu.Unlock()
+			return
+		}
+
+		if i > 1 {
+			time.Sleep(backoff)
+			backoff *= 2
+			if backoff > 2*time.Minute {
+				backoff = 2 * time.Minute
+			}
+		}
+
+		// 再次检查取消
+		sc.reconnectMu.Lock()
+		if sc.reconnectState[serverID] == nil || !sc.reconnectState[serverID].enabled {
+			sc.reconnectMu.Unlock()
+			return
+		}
+		sc.reconnectMu.Unlock()
+
+		if sc.app != nil {
+			sc.app.Event.Emit("reconnecting", map[string]interface{}{
+				"serverID": serverID,
+				"attempt":  i,
+				"reason":   fmt.Sprintf("正在第 %d/%d 次重连…", i, maxAttempts),
+			})
+		}
+
+		connection := &services.SSHConnection{}
+		var cerr error
+		if server.ProxyJumpServerID != "" {
+			sc.mutex.RLock()
+			proxyConn := sc.connections[server.ProxyJumpServerID]
+			sc.mutex.RUnlock()
+			if proxyConn == nil || proxyConn.Client == nil {
+				cerr = fmt.Errorf("跳板机未连接")
+			} else {
+				cerr = connection.ConnectWithProxy(server.Host, server.Port, server.Username, server.Password, server.KeyFile, proxyConn.Client)
+			}
+		} else {
+			cerr = connection.Connect(server.Host, server.Port, server.Username, server.Password, server.KeyFile)
+		}
+
+		if cerr == nil {
+			sc.mutex.Lock()
+			if _, exists := sc.connections[serverID]; !exists {
+				sc.connections[serverID] = connection
+			} else {
+				connection.Close()
+			}
+			sc.mutex.Unlock()
+			sc.startHealthMonitor(serverID)
+			sc.restorePortForwards(serverID)
+			sc.reconnectMu.Lock()
+			delete(sc.reconnectState, serverID)
+			sc.reconnectMu.Unlock()
+			if sc.app != nil {
+				sc.app.Event.Emit("reconnected", map[string]interface{}{"serverID": serverID})
+			}
+			return
+		}
+	}
+	// 放弃重连
+	sc.reconnectMu.Lock()
+	delete(sc.reconnectState, serverID)
+	sc.reconnectMu.Unlock()
+	sc.emitConnectionLost(serverID, "多次尝试重连失败，请手动重连")
 }
 
 // cleanupServerSessions 清理指定服务器下的全部终端会话（不发事件，由调用方统一通知）
@@ -1147,6 +1433,181 @@ func (sc *SSHController) DeleteOpsConfig(id string) error {
 		return err
 	}
 	return sc.opsConfigManager.SaveToFile("config/opsconfig.json")
+}
+
+// ========== 命令历史 ==========
+
+// GetCommandHistory 获取命令历史
+func (sc *SSHController) GetCommandHistory(serverID string) []string {
+	return sc.commandHistory.Get(serverID)
+}
+
+// AddCommandHistory 追加命令历史
+func (sc *SSHController) AddCommandHistory(serverID, command string) {
+	sc.commandHistory.Add(serverID, command)
+}
+
+// ClearCommandHistory 清空命令历史
+func (sc *SSHController) ClearCommandHistory(serverID string) {
+	sc.commandHistory.Clear(serverID)
+}
+
+// ========== 命令片段库 ==========
+
+// GetSnippets 获取全部片段
+func (sc *SSHController) GetSnippets() []models.Snippet {
+	return sc.snippetManager.GetAll()
+}
+
+// AddSnippet 新增片段
+func (sc *SSHController) AddSnippet(s models.Snippet) error {
+	if s.Name == "" {
+		return fmt.Errorf("请填写片段名称")
+	}
+	return sc.snippetManager.Add(s)
+}
+
+// UpdateSnippet 更新片段
+func (sc *SSHController) UpdateSnippet(s models.Snippet) error {
+	if s.Name == "" {
+		return fmt.Errorf("请填写片段名称")
+	}
+	return sc.snippetManager.Update(s)
+}
+
+// DeleteSnippet 删除片段
+func (sc *SSHController) DeleteSnippet(id string) error {
+	return sc.snippetManager.Delete(id)
+}
+
+// ========== 端口转发 ==========
+
+// AddPortForward 新增并启动端口转发
+func (sc *SSHController) AddPortForward(serverID string, fwd services.PortForward) (string, error) {
+	sc.mutex.RLock()
+	conn, exists := sc.connections[serverID]
+	sc.mutex.RUnlock()
+	if !exists || conn.Client == nil {
+		return "", fmt.Errorf("服务器未连接，请先连接服务器")
+	}
+	if fwd.ID == "" {
+		fwd.ID = fmt.Sprintf("pf_%d", time.Now().UnixNano())
+	}
+	fwd.ServerID = serverID
+	fwd.Status = "active"
+	if err := sc.portForwardMgr.Start(conn.Client, fwd); err != nil {
+		return "", err
+	}
+	sc.pfMutex.Lock()
+	sc.portForwardCfgs[serverID] = append(sc.portForwardCfgs[serverID], fwd)
+	sc.pfMutex.Unlock()
+	_ = sc.savePortForwardConfigs()
+	return fwd.ID, nil
+}
+
+// RemovePortForward 移除端口转发
+func (sc *SSHController) RemovePortForward(id string) error {
+	sc.pfMutex.Lock()
+	var foundServer string
+	idx := -1
+	for sid, list := range sc.portForwardCfgs {
+		for i, f := range list {
+			if f.ID == id {
+				foundServer = sid
+				idx = i
+				break
+			}
+		}
+		if idx >= 0 {
+			break
+		}
+	}
+	if idx >= 0 {
+		list := sc.portForwardCfgs[foundServer]
+		sc.portForwardCfgs[foundServer] = append(list[:idx], list[idx+1:]...)
+	}
+	sc.pfMutex.Unlock()
+
+	if err := sc.portForwardMgr.Stop(id); err != nil {
+		return err
+	}
+	_ = sc.savePortForwardConfigs()
+	return nil
+}
+
+// ListPortForwards 列出端口转发
+func (sc *SSHController) ListPortForwards(serverID string) []services.PortForward {
+	return sc.portForwardMgr.List(serverID)
+}
+
+// ========== 快速连接（ssh://user@host:port） ==========
+
+// ConnectByURI 解析 ssh://user[:pass]@host[:port] 或 user@host:port 一键直连（临时入库）
+func (sc *SSHController) ConnectByURI(uri string) (string, error) {
+	uri = strings.TrimSpace(uri)
+	if uri == "" {
+		return "", fmt.Errorf("请输入连接地址")
+	}
+	uri = strings.TrimPrefix(uri, "ssh://")
+	re := regexp.MustCompile(`^(?:([^:@]+)(?::([^@]*))?@)?([^:/]+)(?::(\d+))?$`)
+	m := re.FindStringSubmatch(uri)
+	if m == nil {
+		return "", fmt.Errorf("无法解析连接地址: %s", uri)
+	}
+	user := m[1]
+	password := m[2]
+	host := m[3]
+	portStr := m[4]
+	port := 22
+	if portStr != "" {
+		if p, err := strconv.Atoi(portStr); err == nil && p > 0 && p <= 65535 {
+			port = p
+		}
+	}
+	if user == "" {
+		user = "root"
+	}
+
+	groupID, err := sc.ensureQuickConnectGroup()
+	if err != nil {
+		return "", err
+	}
+	serverID := fmt.Sprintf("qc_%d", time.Now().UnixNano())
+	server := models.Server{
+		ID:       serverID,
+		Name:     fmt.Sprintf("%s@%s:%d", user, host, port),
+		Host:     host,
+		Port:     port,
+		Username: user,
+		Password: password,
+		GroupID:  groupID,
+	}
+	if err := sc.serverManager.AddServer(groupID, server); err != nil {
+		return "", fmt.Errorf("保存快速连接失败: %v", err)
+	}
+	_ = sc.saveConfig()
+
+	if _, err := sc.ConnectToServer(serverID); err != nil {
+		return "", err
+	}
+	return serverID, nil
+}
+
+// ensureQuickConnectGroup 确保“快速连接”分组存在并返回其 ID
+func (sc *SSHController) ensureQuickConnectGroup() (string, error) {
+	const groupName = "快速连接"
+	for _, g := range sc.serverManager.GetGroups() {
+		if g.Name == groupName {
+			return g.ID, nil
+		}
+	}
+	group := models.ServerGroup{ID: "group_quickconnect", Name: groupName, Servers: []models.Server{}}
+	sc.serverManager.AddGroup(group)
+	if err := sc.saveConfig(); err != nil {
+		return "", err
+	}
+	_ = sc.saveConfig()
+	return group.ID, nil
 }
 
 // ========== 脚本管理相关方法 ==========

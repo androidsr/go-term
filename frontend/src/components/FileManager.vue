@@ -1,5 +1,6 @@
 <template>
-  <div class="file-manager-container">
+  <div class="file-manager-container" @dragover.prevent="dropActive = true" @dragleave="onDragLeave" @drop="handleDrop">
+    <div v-if="dropActive" class="drop-mask">松开以上传到 {{ currentPath }}</div>
     <a-layout class="file-layout">
       <a-layout>
         <a-layout-content class="content">
@@ -124,7 +125,8 @@ export default {
         { title: '操作', dataIndex: 'action', key: 'action' }
       ],
       downloading: '',
-      lastPathLoaded: false
+      lastPathLoaded: false,
+      dropActive: false
     }
   },
   computed: {
@@ -240,6 +242,24 @@ export default {
 
     selectAndUploadFile() {
       this.selectFileToUpload()
+    },
+
+    onDragLeave(e) {
+      if (e.target === e.currentTarget) this.dropActive = false
+    },
+
+    async handleDrop(e) {
+      e.preventDefault()
+      this.dropActive = false
+      const files = e.dataTransfer && e.dataTransfer.files
+      if (!files || !files.length) return
+      for (let i = 0; i < files.length; i++) {
+        const localPath = files[i].path
+        if (!localPath) continue
+        const fileName = localPath.split(/[\\/]/).pop()
+        const remotePath = `${this.currentPath}/${fileName}`
+        this.startUpload(localPath, remotePath, fileName)
+      }
     },
 
     async selectFileToUpload() {
@@ -398,6 +418,19 @@ export default {
 .file-name-cell { display: flex; align-items: center; gap: 8px; }
 .file-name { cursor: pointer; color: #1890ff; }
 .file-name:hover { text-decoration: underline; }
+.drop-mask {
+  position: absolute;
+  inset: 0;
+  background: rgba(24, 144, 255, 0.15);
+  border: 2px dashed #1890ff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 18px;
+  color: #1890ff;
+  z-index: 50;
+  pointer-events: none;
+}
 @media (max-width: 768px) {
   .file-header { flex-direction: column; align-items: stretch; }
   .path-navigation { justify-content: center; }

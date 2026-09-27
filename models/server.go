@@ -18,6 +18,8 @@ type Server struct {
 	KeyFile  string `json:"keyFile"` // SSH密钥文件路径
 	GroupID  string `json:"groupId"`
 	Note     string `json:"note"`   // 备注信息
+	// ProxyJumpServerID 跳板机：通过此已连接服务器代理连接本服务器（为空表示直连）
+	ProxyJumpServerID string `json:"proxyJumpServerId"`
 }
 
 // BatchScript 批量脚本

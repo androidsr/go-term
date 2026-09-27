@@ -30,8 +30,11 @@ func main() {
 
 	app.Window.NewWithOptions(application.WebviewWindowOptions{
 		Title:            "那个谁SSH终端",
-		Width:            1100,
-		Height:           750,
+		Width:            1280,
+		Height:           820,
+		MinWidth:         900,
+		MinHeight:        600,
+		StartState:       application.WindowStateMaximised,
 		BackgroundColour: application.NewRGB(20, 20, 20),
 		Windows: application.WindowsWindow{
 			Theme: application.Dark,
