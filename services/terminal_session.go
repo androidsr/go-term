@@ -6,6 +6,7 @@ import (
 	"io"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"golang.org/x/crypto/ssh"
@@ -33,6 +34,10 @@ type TerminalSession struct {
 	serverID       string
 	eventEmitFunc  func(event string, data ...interface{})
 	outputPushDone chan struct{}
+
+	// 意外断开回调：当底层连接被远端关闭（如 vi 卡死、网络中断）时触发
+	onUnexpectedClose func()
+	closedFlag        int32 // 0=未关闭 1=已正常关闭
 }
 
 func (s *SSHConnection) CreateTerminalSession(width, height int) (*TerminalSession, error) {
@@ -85,6 +90,16 @@ func (s *SSHConnection) CreateTerminalSession(width, height int) (*TerminalSessi
 	return ts, nil
 }
 
+// OnUnexpectedClose 设置底层连接意外断开时的回调（如 vi 卡死、网络中断）
+func (ts *TerminalSession) OnUnexpectedClose(f func()) {
+	ts.onUnexpectedClose = f
+}
+
+// IsClosed 返回会话是否已正常关闭
+func (ts *TerminalSession) IsClosed() bool {
+	return atomic.LoadInt32(&ts.closedFlag) == 1
+}
+
 func (ts *TerminalSession) readLoop(r io.Reader, out chan []byte) {
 	buf := make([]byte, 4096)
 	for {
@@ -127,12 +142,19 @@ func (ts *TerminalSession) readLoop(r io.Reader, out chan []byte) {
 			}
 			// EOF错误表示连接已正常关闭，可以直接返回
 			if err == io.EOF {
+				// 仅当未被正常关闭时，才视为意外断开
+				if !ts.IsClosed() && ts.onUnexpectedClose != nil {
+					ts.onUnexpectedClose()
+				}
 				return
 			}
 			if err != nil {
 				// 其他错误记录日志但继续运行
 				// 使用fmt.Println代替log.Printf避免导入问题
 				fmt.Printf("终端读取错误: %v\n", err)
+				if !ts.IsClosed() && ts.onUnexpectedClose != nil {
+					ts.onUnexpectedClose()
+				}
 				return
 			}
 		}
@@ -446,6 +468,8 @@ func (ts *TerminalSession) ResizeTerminal(width, height int) error {
 func (ts *TerminalSession) Close() error {
 	var err error
 	ts.closeOnce.Do(func() {
+		// 标记已正常关闭，避免把正常的 Close 误判为意外断开
+		atomic.StoreInt32(&ts.closedFlag, 1)
 		// 先关闭channel，通知readLoop退出
 		close(ts.closeChan)
 

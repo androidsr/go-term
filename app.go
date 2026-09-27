@@ -1,35 +1,30 @@
 package main
 
 import (
-	"context"
-
-	"github.com/wailsapp/wails/v2/pkg/runtime"
+	"github.com/wailsapp/wails/v3/pkg/application"
 )
 
 type App struct {
-	ctx context.Context
+	app *application.App
 }
 
-func NewApp() *App {
-	return &App{}
-}
-
-func (a *App) startup(ctx context.Context) {
-	a.ctx = ctx
+func NewApp(app *application.App) *App {
+	return &App{app: app}
 }
 
 // SaveFileDialog 打开文件保存对话框
 func (a *App) SaveFileDialog(title, defaultFilename string) (string, error) {
-	return runtime.SaveFileDialog(a.ctx, runtime.SaveDialogOptions{
-		Title:           title,
-		DefaultFilename: defaultFilename,
-	})
+	return a.app.Dialog.SaveFileWithOptions(&application.SaveFileDialogOptions{
+		Title:    title,
+		Filename: defaultFilename,
+	}).PromptForSingleSelection()
 }
 
 // OpenFileDialog 打开文件选择对话框
-func (a *App) OpenFileDialog(title string, filters []runtime.FileFilter) (string, error) {
-	return runtime.OpenFileDialog(a.ctx, runtime.OpenDialogOptions{
-		Title:   title,
-		Filters: filters,
-	})
+func (a *App) OpenFileDialog(title string, filters []application.FileFilter) (string, error) {
+	dialog := a.app.Dialog.OpenFile().SetTitle(title)
+	for _, f := range filters {
+		dialog.AddFilter(f.DisplayName, f.Pattern)
+	}
+	return dialog.PromptForSingleSelection()
 }

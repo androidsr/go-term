@@ -7,12 +7,26 @@ obj/
 config/
 *.dmg
 temp/
+
 # 忽略 Node.js 的依赖和构建文件
 node_modules/
 dist/
-build/
 package-lock.json
 yarn.lock
+
+# Wails v3 构建产物（build/ 目录本身是构建配置，需要纳入版本控制）
+build/bin/
+build/msix/
+build/nsis/
+build/linux/appimage/build/
+build/windows/nsis/MicrosoftEdgeWebview2Setup.exe
+.task
+
+# 移动端生成物（包含本机绝对路径）
+build/ios/xcode/overlay.json
+build/ios/xcode/gen/
+build/android/overlay.json
+build/android/gen/
 
 # 忽略本地 IDE 或编辑器生成的文件
 .idea/
@@ -26,9 +40,8 @@ Thumbs.db
 
 # 忽略 Go 的测试覆盖率文件
 *.coverprofile
-*.out
 
-# 忽略 Wails 特定的构建文件（如果有）
+# Wails v2 遗留配置（v3 使用 build/config.yml + Taskfile.yml）
 wails.json
 sqlite.db
 data/

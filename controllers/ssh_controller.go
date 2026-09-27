@@ -5,12 +5,14 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/pkg/sftp"
-	"github.com/wailsapp/wails/v2/pkg/runtime"
+	"github.com/wailsapp/wails/v3/pkg/application"
 
 	"go-term/models"
 	"go-term/services"
@@ -18,14 +20,17 @@ import (
 
 // SSHController SSH控制器
 type SSHController struct {
-	ctx              context.Context
+	app              *application.App
 	serverManager    *services.ServerManager
 	scriptManager    *services.ScriptManager
 	scriptParser     *services.ScriptParser
 	enhancedExecutor *services.EnhancedScriptExecutor
 	connections      map[string]*services.SSHConnection
 	sftpClients      map[string]*sftp.Client
+	// terminalSessions 以独立的 sessionID 为键，支持同一服务器多个终端会话
 	terminalSessions map[string]*services.TerminalSession
+	// sessionServer 记录 sessionID -> serverID 的映射
+	sessionServer map[string]string
 
 	// 配置文件相关
 	configFile         string
@@ -33,40 +38,50 @@ type SSHController struct {
 	encryptionPassword string
 	needReencrypt      bool // 标记是否需要重新加密保存
 
+	// 运维配置 & 上次打开路径
+	opsConfigManager *services.OpsConfigManager
+	lastPaths        *services.LastPathStore
+
 	// 全局用于保护 map 的读写（短时持有）
 	mutex sync.RWMutex
 
 	// per-server lock，用于序列化同一 server 上的高风险操作（创建/关闭 session 等）
 	locksMutex     sync.Mutex
 	perServerLocks map[string]*sync.Mutex
+
+	// 会话ID自增序列，保证唯一
+	sessionSeq uint64
+
+	// 连接健康检查取消函数
+	healthMu     sync.Mutex
+	healthCancel map[string]context.CancelFunc
 }
 
 // NewSSHController 创建新的SSH控制器
-func NewSSHController() *SSHController {
-	return &SSHController{
-		connections:      make(map[string]*services.SSHConnection),
-		sftpClients:      make(map[string]*sftp.Client),
-		terminalSessions: make(map[string]*services.TerminalSession),
-		perServerLocks:   make(map[string]*sync.Mutex),
-		configFile:       "config/servers.dat", // 默认使用加密文件扩展名
-		useEncryption:    true,                 // 默认启用加密
-		needReencrypt:    false,                // 默认不需要重新加密
-		scriptManager:    services.NewScriptManager(),
-		scriptParser:     services.NewScriptParser(),
-		enhancedExecutor: services.NewEnhancedScriptExecutor(),
+func NewSSHController(app *application.App) *SSHController {
+	// 加密密码优先从环境变量读取，避免硬编码；未设置时使用默认值（保持向后兼容）
+	password := os.Getenv("GO_TERM_ENC_KEY")
+	if password == "" {
+		password = "androidsr"
 	}
-}
 
-// SetEncryptionConfig 设置加密配置
-func (sc *SSHController) SetEncryptionConfig(useEncryption bool, password string) {
-	sc.useEncryption = useEncryption
-	sc.encryptionPassword = password
-
-	// 根据是否使用加密设置配置文件路径
-	if useEncryption {
-		sc.configFile = "config/servers.dat"
-	} else {
-		sc.configFile = "config/servers.json"
+	return &SSHController{
+		app:                app,
+		connections:        make(map[string]*services.SSHConnection),
+		sftpClients:        make(map[string]*sftp.Client),
+		terminalSessions:   make(map[string]*services.TerminalSession),
+		sessionServer:      make(map[string]string),
+		perServerLocks:     make(map[string]*sync.Mutex),
+		configFile:         "config/servers.dat", // 默认使用加密文件扩展名
+		useEncryption:      true,                 // 默认启用加密
+		needReencrypt:      false,                // 默认不需要重新加密
+		scriptManager:      services.NewScriptManager(),
+		scriptParser:       services.NewScriptParser(),
+		enhancedExecutor:   services.NewEnhancedScriptExecutor(),
+		encryptionPassword: password,
+		opsConfigManager:   services.NewOpsConfigManager(),
+		lastPaths:          services.NewLastPathStore(),
+		healthCancel:       make(map[string]context.CancelFunc),
 	}
 }
 
@@ -82,11 +97,15 @@ func (sc *SSHController) getServerLock(serverID string) *sync.Mutex {
 	return l
 }
 
-// Startup 初始化控制器
-func (sc *SSHController) Startup(ctx context.Context) {
-	sc.ctx = ctx
-	sc.serverManager = services.NewServerManager()
+// generateSessionID 生成全局唯一的会话ID
+func (sc *SSHController) generateSessionID(serverID string) string {
+	seq := atomic.AddUint64(&sc.sessionSeq, 1)
+	return fmt.Sprintf("sess_%s_%d", serverID, seq)
+}
 
+// ServiceStartup 实现 v3 服务生命周期接口，应用启动时初始化控制器
+func (sc *SSHController) ServiceStartup(ctx context.Context, options application.ServiceOptions) error {
+	sc.serverManager = services.NewServerManager()
 	// 加载服务器配置
 	if sc.useEncryption {
 		// 使用新的加载方法，支持从明文自动转换为加密格式
@@ -115,6 +134,25 @@ func (sc *SSHController) Startup(ctx context.Context) {
 	if err := sc.scriptManager.LoadFromFile("config/scripts.json"); err != nil {
 		fmt.Printf("警告: 无法加载脚本配置: %v\n", err)
 	}
+
+	// 加载运维配置
+	if err := sc.opsConfigManager.LoadFromFile("config/opsconfig.json"); err != nil {
+		fmt.Printf("警告: 无法加载运维配置: %v\n", err)
+	}
+
+	// 加载上次打开路径
+	if err := sc.lastPaths.Load("config/lastpaths.json"); err != nil {
+		fmt.Printf("警告: 无法加载上次路径记录: %v\n", err)
+	}
+
+	return nil
+}
+
+// ServiceShutdown 应用关闭时保存运维配置与路径记录
+func (sc *SSHController) ServiceShutdown(ctx context.Context, options application.ServiceOptions) error {
+	_ = sc.opsConfigManager.SaveToFile("config/opsconfig.json")
+	_ = sc.lastPaths.Save("config/lastpaths.json")
+	return nil
 }
 
 // saveConfig 保存配置的辅助函数
@@ -277,33 +315,14 @@ func (sc *SSHController) ConnectToServer(serverID string) (string, error) {
 	sc.connections[serverID] = connection
 	sc.mutex.Unlock()
 
+	// 启动连接健康检查
+	sc.startHealthMonitor(serverID)
+
 	return "连接成功", nil
 }
 
-// ExecuteCommand 在服务器上执行命令
+// ExecuteCommand 在服务器上执行命令（直接通过连接执行，不依赖终端会话，供批量脚本执行器使用）
 func (sc *SSHController) ExecuteCommand(serverID, command string) (string, error) {
-	// 优先检查是否存在终端会话（短锁）
-	sc.mutex.RLock()
-	session, hasSession := sc.terminalSessions[serverID]
-	sc.mutex.RUnlock()
-
-	if hasSession {
-		// 在发送命令前确保shell状态干净
-		// 发送 Ctrl+U 清除当前可能存在的输入，然后发送用户选择的命令
-		session.SendCommandWithoutNewline("\x15") // Ctrl+U: 清除当前行
-		time.Sleep(5 * time.Millisecond)
-
-		// 清空输出缓冲区，清除之前补全操作留下的临时数据
-		session.ClearOutputBuffer()
-
-		// 通过终端会话发送命令（session.SendCommand 可能是非阻塞或有独立超时）
-		if err := session.SendCommand(command); err != nil {
-			return "", fmt.Errorf("发送命令失败: %v", err)
-		}
-		return "命令已发送", nil
-	}
-
-	// 否则直接通过 SSHConnection 执行（读取 connection 副本，不持锁做耗时）
 	sc.mutex.RLock()
 	conn, exists := sc.connections[serverID]
 	sc.mutex.RUnlock()
@@ -321,6 +340,9 @@ func (sc *SSHController) ExecuteCommand(serverID, command string) (string, error
 
 // DisconnectFromServer 断开服务器连接 - 修复死锁版本
 func (sc *SSHController) DisconnectFromServer(serverID string) (string, error) {
+	// 停止健康检查
+	sc.stopHealthMonitor(serverID)
+
 	// 使用超时上下文避免死锁
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -398,9 +420,9 @@ func (sc *SSHController) closeSessionWithTimeout(ctx context.Context, session *s
 }
 
 // IsTerminalSessionActive 检查终端会话是否仍然活跃
-func (sc *SSHController) IsTerminalSessionActive(serverID string) bool {
+func (sc *SSHController) IsTerminalSessionActive(sessionID string) bool {
 	sc.mutex.RLock()
-	session, exists := sc.terminalSessions[serverID]
+	session, exists := sc.terminalSessions[sessionID]
 	sc.mutex.RUnlock()
 
 	if !exists {
@@ -449,93 +471,24 @@ func (sc *SSHController) isSessionActive(session *services.TerminalSession) bool
 	}
 }
 
-// CreateTerminalSession 创建终端会话 - 修复竞态条件
-func (sc *SSHController) CreateTerminalSession(serverID string) (string, error) {
+// CreateTerminalSessionWithSize 创建指定尺寸的终端会话，返回唯一 sessionID
+// 一个服务器可创建多个终端会话（支持"复制会话"）。
+func (sc *SSHController) CreateTerminalSessionWithSize(serverID string, width, height int) (string, error) {
 	// 1. 检查连接状态
 	if !sc.isConnectionHealthy(serverID) {
 		return "", fmt.Errorf("服务器连接无效，请重新连接")
 	}
 
-	// 2. 检查现有会话（使用更严格的检查）
-	sc.mutex.RLock()
-	existingSession, exists := sc.terminalSessions[serverID]
-	sc.mutex.RUnlock()
-
-	if exists && existingSession != nil {
-		// 验证会话是否真的有效
-		if sc.isSessionActive(existingSession) {
-			return "终端会话已存在且活跃", nil
-		}
-
-		// 清理无效会话
-		sc.mutex.Lock()
-		delete(sc.terminalSessions, serverID)
-		sc.mutex.Unlock()
-	}
-
-	// 3. 使用无锁方式创建会话
+	// 检查现有会话是否有效（多会话模式下不做单 server 去重，允许同时存在多个）
 	sc.mutex.RLock()
 	conn, exists := sc.connections[serverID]
-	sc.mutex.RUnlock()
-
-	if !exists || conn.Client == nil {
-		return "", fmt.Errorf("服务器未连接")
-	}
-
-	// 创建会话（耗时操作，不持锁）
-	terminalSession, err := conn.CreateTerminalSession(80, 24)
-	if err != nil {
-		return "", fmt.Errorf("创建终端会话失败: %v", err)
-	}
-
-	// 4. 原子性存储新会话
-	sc.mutex.Lock()
-	// 最终检查，避免重复创建
-	if _, exists := sc.terminalSessions[serverID]; exists {
-		sc.mutex.Unlock()
-		terminalSession.Close() // 清理多余的会话
-		return "终端会话已存在", nil
-	}
-	sc.terminalSessions[serverID] = terminalSession
-	sc.mutex.Unlock()
-
-	// 设置事件推送函数并启动推送协程
-	terminalSession.SetEventEmitter(serverID, func(event string, data ...interface{}) {
-		runtime.EventsEmit(sc.ctx, event, data...)
-	})
-	terminalSession.StartOutputPusher()
-
-	return "终端会话创建成功", nil
-}
-
-// CreateTerminalSessionWithSize 创建指定尺寸的终端会话
-func (sc *SSHController) CreateTerminalSessionWithSize(serverID string, width, height int) (string, error) {
-	// 先短锁读取 connection 和会话存在性
-	sc.mutex.RLock()
-	conn, exists := sc.connections[serverID]
-	_, sessionExists := sc.terminalSessions[serverID]
 	sc.mutex.RUnlock()
 
 	if !exists || conn.Client == nil {
 		return "", fmt.Errorf("服务器未连接，请先连接服务器")
 	}
 
-	// 检查现有会话是否有效
-	if sessionExists {
-		// 检查会话是否仍然活跃
-		if !sc.IsTerminalSessionActive(serverID) {
-			fmt.Println("会话已失效", serverID)
-			// 会话已失效，清理并允许创建新会话
-			sc.mutex.Lock()
-			delete(sc.terminalSessions, serverID)
-			sc.mutex.Unlock()
-		} else {
-			// 会话仍然有效
-			return "终端会话已存在", nil
-		}
-	}
-
-	// 使用 per-server lock 序列化本服务器的 create/close 操作
+	// 2. 使用 per-server lock 序列化本服务器的 create/close 操作
 	serverLock := sc.getServerLock(serverID)
 	serverLock.Lock()
 	defer serverLock.Unlock()
@@ -546,25 +499,44 @@ func (sc *SSHController) CreateTerminalSessionWithSize(serverID string, width, h
 		return "", fmt.Errorf("创建终端会话失败: %v", err)
 	}
 
+	// 生成唯一 sessionID
+	sessionID := sc.generateSessionID(serverID)
+
 	// 创建成功后用短锁写回 map
 	sc.mutex.Lock()
-	// 再次检查（double-check）避免竞态：在我们创建期间别人可能已创建
-	if _, ok := sc.terminalSessions[serverID]; ok {
-		// 已有会话：关闭我们刚创建的会话并返回已存在
-		sc.mutex.Unlock()
-		_ = terminalSession.Close()
-		return "终端会话已存在", nil
-	}
-	sc.terminalSessions[serverID] = terminalSession
+	sc.terminalSessions[sessionID] = terminalSession
+	sc.sessionServer[sessionID] = serverID
 	sc.mutex.Unlock()
 
-	// 设置事件推送函数并启动推送协程
-	terminalSession.SetEventEmitter(serverID, func(event string, data ...interface{}) {
-		runtime.EventsEmit(sc.ctx, event, data...)
+	// 设置意外断开回调（用于检测 vi 卡死/服务器掉线等）
+	terminalSession.OnUnexpectedClose(func() {
+		sc.handleSessionUnexpectedClose(serverID, sessionID)
+	})
+
+	// 设置事件推送函数并启动推送协程（事件以 sessionID 为维度，避免多会话互相串扰）
+	terminalSession.SetEventEmitter(sessionID, func(event string, data ...interface{}) {
+		sc.app.Event.Emit(event, data...)
 	})
 	terminalSession.StartOutputPusher()
 
-	return "终端会话创建成功", nil
+	return sessionID, nil
+}
+
+// handleSessionUnexpectedClose 终端会话意外断开（连接已死、远端关闭等）时的统一处理
+func (sc *SSHController) handleSessionUnexpectedClose(serverID, sessionID string) {
+	sc.mutex.Lock()
+	delete(sc.terminalSessions, sessionID)
+	delete(sc.sessionServer, sessionID)
+	sc.mutex.Unlock()
+
+	// 通知前端该会话已失效，便于弹出重连/退出提示
+	if sc.app != nil {
+		sc.app.Event.Emit("terminal-session-closed", map[string]interface{}{
+			"sessionID": sessionID,
+			"serverID":  serverID,
+			"reason":    "连接已断开或远端关闭了会话",
+		})
+	}
 }
 
 // CreateSFTPClient 创建SFTP客户端
@@ -608,9 +580,9 @@ func (sc *SSHController) CreateSFTPClient(serverID string) (string, error) {
 }
 
 // ReadTerminalOutput 读取终端输出
-func (sc *SSHController) ReadTerminalOutput(serverID string) (string, error) {
+func (sc *SSHController) ReadTerminalOutput(sessionID string) (string, error) {
 	sc.mutex.RLock()
-	terminalSession, exists := sc.terminalSessions[serverID]
+	terminalSession, exists := sc.terminalSessions[sessionID]
 	sc.mutex.RUnlock()
 
 	if !exists {
@@ -629,9 +601,9 @@ func (sc *SSHController) ReadTerminalOutput(serverID string) (string, error) {
 }
 
 // GetTerminalLastOutput 获取终端最后的输出内容
-func (sc *SSHController) GetTerminalLastOutput(serverID string) (string, error) {
+func (sc *SSHController) GetTerminalLastOutput(sessionID string) (string, error) {
 	sc.mutex.RLock()
-	terminalSession, exists := sc.terminalSessions[serverID]
+	terminalSession, exists := sc.terminalSessions[sessionID]
 	sc.mutex.RUnlock()
 
 	if !exists {
@@ -642,9 +614,9 @@ func (sc *SSHController) GetTerminalLastOutput(serverID string) (string, error) 
 }
 
 // ClearTerminalOutputBuffer 清空终端输出缓冲区
-func (sc *SSHController) ClearTerminalOutputBuffer(serverID string) error {
+func (sc *SSHController) ClearTerminalOutputBuffer(sessionID string) error {
 	sc.mutex.RLock()
-	terminalSession, exists := sc.terminalSessions[serverID]
+	terminalSession, exists := sc.terminalSessions[sessionID]
 	sc.mutex.RUnlock()
 
 	if !exists {
@@ -656,9 +628,9 @@ func (sc *SSHController) ClearTerminalOutputBuffer(serverID string) error {
 }
 
 // GetAutoCompleteSuggestions 获取自动补全建议
-func (sc *SSHController) GetAutoCompleteSuggestions(serverID, partialCommand string) ([]string, error) {
+func (sc *SSHController) GetAutoCompleteSuggestions(sessionID, partialCommand string) ([]string, error) {
 	sc.mutex.RLock()
-	terminalSession, exists := sc.terminalSessions[serverID]
+	terminalSession, exists := sc.terminalSessions[sessionID]
 	sc.mutex.RUnlock()
 
 	if !exists {
@@ -739,9 +711,8 @@ func (sc *SSHController) UploadFile(serverID, localPath, remotePath string) (str
 	return "文件上传成功", nil
 }
 
-// UploadFileWithProgress 带进度回调的上传文件
-// wails:export
-func (sc *SSHController) UploadFileWithProgress(serverID, localPath, remotePath string) (string, error) {
+// UploadFileWithProgress 带进度回调的上传文件（任务化：进度事件携带 taskID）
+func (sc *SSHController) UploadFileWithProgress(serverID, taskID, localPath, remotePath string) (string, error) {
 	sc.mutex.RLock()
 	conn, exists := sc.connections[serverID]
 	sftpClient, sftpExists := sc.sftpClients[serverID]
@@ -756,10 +727,16 @@ func (sc *SSHController) UploadFileWithProgress(serverID, localPath, remotePath 
 
 	// 带进度回调的上传
 	if err := conn.UploadFile(sftpClient, localPath, remotePath, func(transferred, total int64) {
-		// 发送进度事件到前端
-		percent := float64(transferred) / float64(total) * 100
-		runtime.EventsEmit(sc.ctx, "file-upload-progress", map[string]interface{}{
+		// 发送进度事件到前端（携带 taskID，便于前端聚合为任务列表）
+		percent := float64(0)
+		if total > 0 {
+			percent = float64(transferred) / float64(total) * 100
+		}
+		sc.app.Event.Emit("file-upload-progress", map[string]interface{}{
 			"serverID":    serverID,
+			"taskID":      taskID,
+			"localPath":   localPath,
+			"remotePath":  remotePath,
 			"transferred": transferred,
 			"total":       total,
 			"percent":     percent,
@@ -791,9 +768,8 @@ func (sc *SSHController) DownloadFile(serverID, remotePath, localPath string) (s
 	return "文件下载成功", nil
 }
 
-// DownloadFileWithProgress 带进度回调的下载文件
-// wails:export
-func (sc *SSHController) DownloadFileWithProgress(serverID, remotePath, localPath string) (string, error) {
+// DownloadFileWithProgress 带进度回调的下载文件（任务化：进度事件携带 taskID）
+func (sc *SSHController) DownloadFileWithProgress(serverID, taskID, remotePath, localPath string) (string, error) {
 	sc.mutex.RLock()
 	conn, exists := sc.connections[serverID]
 	sftpClient, sftpExists := sc.sftpClients[serverID]
@@ -808,13 +784,19 @@ func (sc *SSHController) DownloadFileWithProgress(serverID, remotePath, localPat
 
 	// 带进度回调的下载
 	if err := conn.DownloadFile(sftpClient, remotePath, localPath, func(transferred, total int64) {
-		// 发送进度事件到前端
-		percent := float64(transferred) / float64(total) * 100
-		runtime.EventsEmit(sc.ctx, "file-download-progress", map[string]interface{}{
-			"serverID":    serverID,
+		// 发送进度事件到前端（携带 taskID，便于前端聚合为任务列表）
+		percent := float64(0)
+		if total > 0 {
+			percent = float64(transferred) / float64(total) * 100
+		}
+		sc.app.Event.Emit("file-download-progress", map[string]interface{}{
+			"serverID":   serverID,
+			"taskID":     taskID,
+			"remotePath": remotePath,
+			"localPath":  localPath,
 			"transferred": transferred,
-			"total":       total,
-			"percent":     percent,
+			"total":      total,
+			"percent":    percent,
 		})
 	}); err != nil {
 		return "", fmt.Errorf("下载文件失败: %v", err)
@@ -886,11 +868,11 @@ func (sc *SSHController) DeleteFile(serverID, path string) (string, error) {
 	return "文件删除成功", nil
 }
 
-// ExecuteCommandWithoutNewline 执行命令但不添加换行符
-func (sc *SSHController) ExecuteCommandWithoutNewline(serverID, command string) (string, error) {
+// ExecuteCommandWithoutNewline 执行命令但不添加换行符（按 sessionID 定向）
+func (sc *SSHController) ExecuteCommandWithoutNewline(sessionID, command string) (string, error) {
 	// 优先检查是否存在终端会话（短锁）
 	sc.mutex.RLock()
-	session, hasSession := sc.terminalSessions[serverID]
+	session, hasSession := sc.terminalSessions[sessionID]
 	sc.mutex.RUnlock()
 
 	if hasSession {
@@ -904,10 +886,10 @@ func (sc *SSHController) ExecuteCommandWithoutNewline(serverID, command string) 
 	return "", fmt.Errorf("终端会话不存在")
 }
 
-// InterruptCommand 中断当前正在执行的命令（发送 Ctrl+C）
-func (sc *SSHController) InterruptCommand(serverID string) (string, error) {
+// InterruptCommand 中断当前正在执行的命令（发送 Ctrl+C，按 sessionID 定向）
+func (sc *SSHController) InterruptCommand(sessionID string) (string, error) {
 	sc.mutex.RLock()
-	session, hasSession := sc.terminalSessions[serverID]
+	session, hasSession := sc.terminalSessions[sessionID]
 	sc.mutex.RUnlock()
 
 	if !hasSession {
@@ -927,15 +909,22 @@ func (sc *SSHController) InterruptCommand(serverID string) (string, error) {
 	return "命令已中断", nil
 }
 
-// CloseTerminalSession 关闭指定的终端会话
-func (sc *SSHController) CloseTerminalSession(serverID string) (string, error) {
+// CloseTerminalSession 关闭指定的终端会话（按 sessionID 定向）
+func (sc *SSHController) CloseTerminalSession(sessionID string) (string, error) {
+	// 先从 sessionServer 反查 serverID，保证与创建/上传等操作用同一把 per-server 锁
+	sc.mutex.RLock()
+	serverID, ok := sc.sessionServer[sessionID]
+	sc.mutex.RUnlock()
+	if !ok {
+		return "终端会话不存在", nil
+	}
 	// 序列化同 server 的操作
 	serverLock := sc.getServerLock(serverID)
 	serverLock.Lock()
-	defer serverLock.Unlock() // 使用标准的defer方式确保锁释放
+	defer serverLock.Unlock()
 	// 读取会话副本（短锁），然后释放锁进行关闭
 	sc.mutex.RLock()
-	session, hasSession := sc.terminalSessions[serverID]
+	session, hasSession := sc.terminalSessions[sessionID]
 	sc.mutex.RUnlock()
 
 	if !hasSession {
@@ -947,7 +936,7 @@ func (sc *SSHController) CloseTerminalSession(serverID string) (string, error) {
 	// 使用更严格的超时控制
 	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
 	defer cancel()
-	fmt.Println("会话副本读取完成", serverID)
+	fmt.Println("会话副本读取完成", sessionID)
 
 	closeChan := make(chan error, 1)
 	go func() {
@@ -961,7 +950,7 @@ func (sc *SSHController) CloseTerminalSession(serverID string) (string, error) {
 			errMsg = fmt.Sprintf("关闭终端会话时出错: %v", err)
 			log.Printf("关闭终端会话时出错: %v", err)
 		} else if err == io.EOF {
-			log.Printf("终端会话已断开连接: %v", serverID)
+			log.Printf("终端会话已断开连接: %v", sessionID)
 		}
 	case <-ctx.Done():
 		errMsg = "关闭终端会话超时"
@@ -971,7 +960,8 @@ func (sc *SSHController) CloseTerminalSession(serverID string) (string, error) {
 
 	// 确保清理数据结构（短锁）
 	sc.mutex.Lock()
-	delete(sc.terminalSessions, serverID)
+	delete(sc.terminalSessions, sessionID)
+	delete(sc.sessionServer, sessionID)
 	sc.mutex.Unlock()
 
 	if errMsg != "" {
@@ -980,11 +970,11 @@ func (sc *SSHController) CloseTerminalSession(serverID string) (string, error) {
 	return "终端会话已关闭", nil
 }
 
-// ResizeTerminal 调整终端大小
-func (sc *SSHController) ResizeTerminal(serverID string, width, height int) (string, error) {
+// ResizeTerminal 调整终端大小（按 sessionID 定向）
+func (sc *SSHController) ResizeTerminal(sessionID string, width, height int) (string, error) {
 	// 读取终端会话（短锁）
 	sc.mutex.RLock()
-	session, exists := sc.terminalSessions[serverID]
+	session, exists := sc.terminalSessions[sessionID]
 	sc.mutex.RUnlock()
 
 	if !exists {
@@ -997,6 +987,166 @@ func (sc *SSHController) ResizeTerminal(serverID string, width, height int) (str
 	}
 
 	return "终端大小调整成功", nil
+}
+
+// ========== 连接健康检查与断线通知 ==========
+
+// startHealthMonitor 启动针对某服务器的后台健康检查，连接断开时通知前端
+func (sc *SSHController) startHealthMonitor(serverID string) {
+	sc.healthMu.Lock()
+	// 若已存在监控，先取消旧监控
+	if cancel, ok := sc.healthCancel[serverID]; ok {
+		cancel()
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	sc.healthCancel[serverID] = cancel
+	sc.healthMu.Unlock()
+
+	go func() {
+		ticker := time.NewTicker(15 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				sc.mutex.RLock()
+				conn, exists := sc.connections[serverID]
+				sc.mutex.RUnlock()
+				if !exists || conn == nil || conn.Client == nil {
+					// 连接已不存在，停止监控
+					cancel()
+					return
+				}
+				_, _, err := conn.Client.SendRequest("keepalive@openssh.com", true, nil)
+				if err != nil {
+					// 连接已失效
+					sc.handleConnectionLost(serverID)
+					return
+				}
+			}
+		}
+	}()
+}
+
+// stopHealthMonitor 停止健康检查
+func (sc *SSHController) stopHealthMonitor(serverID string) {
+	sc.healthMu.Lock()
+	if cancel, ok := sc.healthCancel[serverID]; ok {
+		cancel()
+		delete(sc.healthCancel, serverID)
+	}
+	sc.healthMu.Unlock()
+}
+
+// handleConnectionLost 连接断开时的统一处理：清理资源并通知前端
+func (sc *SSHController) handleConnectionLost(serverID string) {
+	sc.stopHealthMonitor(serverID)
+
+	// 清理该服务器下的所有终端会话
+	sc.cleanupServerSessions(serverID)
+
+	// 清理连接与 SFTP
+	sc.mutex.Lock()
+	if sftpClient, ok := sc.sftpClients[serverID]; ok {
+		_ = sftpClient.Close()
+		delete(sc.sftpClients, serverID)
+	}
+	if conn, ok := sc.connections[serverID]; ok {
+		conn.Close()
+		delete(sc.connections, serverID)
+	}
+	sc.mutex.Unlock()
+
+	// 通知前端该服务器连接已丢失
+	if sc.app != nil {
+		sc.app.Event.Emit("connection-lost", map[string]interface{}{
+			"serverID": serverID,
+			"reason":   "服务器连接已断开（网络中断或远端关闭）",
+		})
+	}
+}
+
+// cleanupServerSessions 清理指定服务器下的全部终端会话（不发事件，由调用方统一通知）
+func (sc *SSHController) cleanupServerSessions(serverID string) {
+	sc.mutex.Lock()
+	var toClose []*services.TerminalSession
+	var toDelete []string
+	for sid, srv := range sc.sessionServer {
+		if srv == serverID {
+			if sess, ok := sc.terminalSessions[sid]; ok {
+				toClose = append(toClose, sess)
+			}
+			toDelete = append(toDelete, sid)
+		}
+	}
+	for _, sid := range toDelete {
+		delete(sc.terminalSessions, sid)
+		delete(sc.sessionServer, sid)
+	}
+	sc.mutex.Unlock()
+
+	for _, sess := range toClose {
+		_ = sess.Close()
+	}
+}
+
+// ========== 上次打开路径 ==========
+
+// GetLastPath 获取服务器上次打开的目录
+func (sc *SSHController) GetLastPath(serverID string) string {
+	return sc.lastPaths.Get(serverID)
+}
+
+// SetLastPath 记录服务器上次打开的目录并落盘
+func (sc *SSHController) SetLastPath(serverID, path string) string {
+	sc.lastPaths.Set(serverID, path)
+	if err := sc.lastPaths.Save("config/lastpaths.json"); err != nil {
+		fmt.Printf("警告: 保存上次路径失败: %v\n", err)
+	}
+	return path
+}
+
+// ========== 运维配置模块 ==========
+
+// GetOpsConfigs 获取所有运维配置
+func (sc *SSHController) GetOpsConfigs() []models.OpsConfig {
+	return sc.opsConfigManager.GetConfigs()
+}
+
+// GetOpsConfigsByServer 获取指定服务器的运维配置
+func (sc *SSHController) GetOpsConfigsByServer(serverID string) []models.OpsConfig {
+	return sc.opsConfigManager.GetConfigsByServer(serverID)
+}
+
+// AddOpsConfig 新增运维配置
+func (sc *SSHController) AddOpsConfig(cfg models.OpsConfig) error {
+	if cfg.Name == "" {
+		return fmt.Errorf("请填写配置名称")
+	}
+	if err := sc.opsConfigManager.AddConfig(cfg); err != nil {
+		return err
+	}
+	return sc.opsConfigManager.SaveToFile("config/opsconfig.json")
+}
+
+// UpdateOpsConfig 更新运维配置
+func (sc *SSHController) UpdateOpsConfig(cfg models.OpsConfig) error {
+	if cfg.Name == "" {
+		return fmt.Errorf("请填写配置名称")
+	}
+	if err := sc.opsConfigManager.UpdateConfig(cfg); err != nil {
+		return err
+	}
+	return sc.opsConfigManager.SaveToFile("config/opsconfig.json")
+}
+
+// DeleteOpsConfig 删除运维配置
+func (sc *SSHController) DeleteOpsConfig(id string) error {
+	if err := sc.opsConfigManager.DeleteConfig(id); err != nil {
+		return err
+	}
+	return sc.opsConfigManager.SaveToFile("config/opsconfig.json")
 }
 
 // ========== 脚本管理相关方法 ==========
@@ -1021,7 +1171,7 @@ func (sc *SSHController) DeleteBatchScript(scriptID string) error {
 	return sc.scriptManager.DeleteScript(scriptID)
 }
 
-// ExecuteBatchScript 执行批量脚本
+// ExecuteBatchScript 执行批量脚本（后端批量模式，结果通过返回值一次性返回）
 func (sc *SSHController) ExecuteBatchScript(scriptID string) (map[string]models.ScriptExecution, error) {
 	// 获取脚本
 	script, err := sc.scriptManager.GetScriptByID(scriptID)
@@ -1036,6 +1186,22 @@ func (sc *SSHController) ExecuteBatchScript(scriptID string) (map[string]models.
 		for _, server := range group.Servers {
 			serverMap[server.ID] = server.Name
 		}
+	}
+
+	// 通知前端：脚本任务已创建（用于实时任务列表）
+	if sc.app != nil {
+		sc.app.Event.Emit("script-task-created", map[string]interface{}{
+			"scriptID":   scriptID,
+			"scriptName": script.Name,
+			"serverIDs":  script.ServerIDs,
+			"serverNames": func() []string {
+				names := make([]string, 0, len(script.ServerIDs))
+				for _, sid := range script.ServerIDs {
+					names = append(names, serverMap[sid])
+				}
+				return names
+			}(),
+		})
 	}
 
 	// 并发执行脚本 - 添加并发控制
@@ -1150,6 +1316,18 @@ func (sc *SSHController) ExecuteBatchScript(scriptID string) (map[string]models.
 			resultMutex.Lock()
 			results[sid] = execution
 			resultMutex.Unlock()
+
+			// 通知前端：该服务器执行结果已更新（实时日志）
+			if sc.app != nil {
+				sc.app.Event.Emit("script-task-update", map[string]interface{}{
+					"scriptID":       scriptID,
+					"serverID":       sid,
+					"serverName":     serverMap[sid],
+					"status":         execution.Status,
+					"commandOutputs": execution.CommandOutputs,
+					"error":          execution.Error,
+				})
+			}
 		}(serverID)
 	}
 
@@ -1157,9 +1335,16 @@ func (sc *SSHController) ExecuteBatchScript(scriptID string) (map[string]models.
 	return results, nil
 }
 
-// SendScriptToTerminal 逐行发送脚本命令到终端（用于命令模式）
-// wails:export
-func (sc *SSHController) SendScriptToTerminal(scriptID string, serverID string) error {
+// SendScriptToTerminal 逐行发送脚本命令到指定终端会话（用于命令模式）
+func (sc *SSHController) SendScriptToTerminal(scriptID string, sessionID string) error {
+	// 获取会话对应的服务器
+	sc.mutex.RLock()
+	serverID, ok := sc.sessionServer[sessionID]
+	sc.mutex.RUnlock()
+	if !ok {
+		return fmt.Errorf("终端会话不存在或已失效")
+	}
+
 	// 获取脚本
 	script, err := sc.scriptManager.GetScriptByID(scriptID)
 	if err != nil {
@@ -1191,9 +1376,11 @@ func (sc *SSHController) SendScriptToTerminal(scriptID string, serverID string) 
 	}
 
 	// 确保终端会话存在
-	_, err = sc.CreateTerminalSession(serverID)
-	if err != nil {
-		return fmt.Errorf("创建终端会话失败: %v", err)
+	sc.mutex.RLock()
+	_, sessionExists := sc.terminalSessions[sessionID]
+	sc.mutex.RUnlock()
+	if !sessionExists {
+		return fmt.Errorf("终端会话不存在或已失效")
 	}
 
 	// 逐行发送命令到终端
@@ -1220,13 +1407,6 @@ func (sc *SSHController) SendScriptToTerminal(scriptID string, serverID string) 
 				}
 				remotePath += localFileName
 
-				// 在终端中显示上传信息
-				// 注释掉下面的代码，避免在终端中输出上传日志
-				// _, sendErr := sc.ExecuteCommandWithoutNewline(serverID, fmt.Sprintf("echo \"正在上传文件: %s -> %s\"\n", localPath, remotePath))
-				// if sendErr != nil {
-				// 	fmt.Printf("发送信息到终端失败: %v\n", sendErr)
-				// }
-
 				// 确保SFTP客户端已创建
 				err := sc.EnsureSFTPClient(serverID)
 				if err != nil {
@@ -1241,13 +1421,6 @@ func (sc *SSHController) SendScriptToTerminal(scriptID string, serverID string) 
 				} else {
 					fmt.Printf("文件上传成功: %s -> %s\n", localPath, remotePath)
 				}
-			} else {
-				// 发送错误信息到终端
-				// 注释掉下面的代码，避免在终端中输出上传日志
-				// _, sendErr := sc.ExecuteCommandWithoutNewline(serverID, fmt.Sprintf("echo \"上传命令格式错误: %s\"\n", parsedCmd.Command))
-				// if sendErr != nil {
-				// 	fmt.Printf("发送错误信息到终端失败: %v\n", sendErr)
-				// }
 			}
 			// 添加一个小延迟
 			time.Sleep(500 * time.Millisecond)
@@ -1261,13 +1434,6 @@ func (sc *SSHController) SendScriptToTerminal(scriptID string, serverID string) 
 			if len(parts) >= 2 {
 				remotePath := parts[0]
 				localPath := parts[1]
-
-				// 在终端中显示下载信息
-				// 注释掉下面的代码，避免在终端中输出下载日志
-				// _, sendErr := sc.ExecuteCommandWithoutNewline(serverID, fmt.Sprintf("echo \"正在下载文件: %s -> %s\"\n", remotePath, localPath))
-				// if sendErr != nil {
-				// 	fmt.Printf("发送信息到终端失败: %v\n", sendErr)
-				// }
 
 				// 确保SFTP客户端已创建
 				err := sc.EnsureSFTPClient(serverID)
@@ -1283,13 +1449,6 @@ func (sc *SSHController) SendScriptToTerminal(scriptID string, serverID string) 
 				} else {
 					fmt.Printf("文件下载成功: %s -> %s\n", remotePath, localPath)
 				}
-			} else {
-				// 发送错误信息到终端
-				// 注释掉下面的代码，避免在终端中输出下载日志
-				// _, sendErr := sc.ExecuteCommandWithoutNewline(serverID, fmt.Sprintf("echo \"下载命令格式错误: %s\"\n", parsedCmd.Command))
-				// if sendErr != nil {
-				// 	fmt.Printf("发送错误信息到终端失败: %v\n", sendErr)
-				// }
 			}
 			// 添加一个小延迟
 			time.Sleep(500 * time.Millisecond)
@@ -1311,7 +1470,7 @@ func (sc *SSHController) SendScriptToTerminal(scriptID string, serverID string) 
 			if displayOutput == "" {
 				displayOutput = "(无输出)"
 			}
-			runtime.EventsEmit(sc.ctx, "local-command-output", map[string]interface{}{
+			sc.app.Event.Emit("local-command-output", map[string]interface{}{
 				"command": "!" + parsedCmd.Command,
 				"output":  displayOutput,
 			})
@@ -1322,7 +1481,7 @@ func (sc *SSHController) SendScriptToTerminal(scriptID string, serverID string) 
 		// 处理shell类型的命令，发送到终端
 		if parsedCmd.CommandType == "shell" {
 			// 发送命令到终端（带换行符，让命令执行）
-			_, err = sc.ExecuteCommand(serverID, parsedCmd.Command)
+			_, err = sc.ExecuteCommandWithoutNewline(sessionID, parsedCmd.Command+"\n")
 			if err != nil {
 				// 记录错误但继续执行下一个命令
 				fmt.Printf("发送命令到终端失败: %v\n", err)
@@ -1387,7 +1546,7 @@ func (sc *SSHController) ExecDownloadFile(serverID, remotePath, localPath string
 	return sc.DownloadFile(serverID, remotePath, localPath)
 }
 
-// HandleFileUploadRequest 处理文件上传请求
+// HandleFileUploadRequest 处理文件上传请求（供终端内嵌上传使用）
 func (sc *SSHController) HandleFileUploadRequest(serverID, localPath, remotePath string) error {
 	// 确保SFTP客户端已创建
 	err := sc.EnsureSFTPClient(serverID)
@@ -1404,7 +1563,7 @@ func (sc *SSHController) HandleFileUploadRequest(serverID, localPath, remotePath
 	return nil
 }
 
-// HandleFileDownloadRequest 处理文件下载请求
+// HandleFileDownloadRequest 处理文件下载请求（供终端内嵌下载使用）
 func (sc *SSHController) HandleFileDownloadRequest(serverID, remotePath, localPath string) error {
 	// 确保SFTP客户端已创建
 	err := sc.EnsureSFTPClient(serverID)

@@ -1,58 +1,60 @@
 package main
 
 import (
-	"context"
 	"embed"
+	"fmt"
 
 	"go-term/controllers"
 
-	"github.com/wailsapp/wails/v2"
-	"github.com/wailsapp/wails/v2/pkg/options"
-	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
-	"github.com/wailsapp/wails/v2/pkg/options/windows"
+	"github.com/wailsapp/wails/v3/pkg/application"
 )
 
 //go:embed all:frontend/dist
 var assets embed.FS
 
+//go:embed appicon.png
+var appIcon []byte
+
 func main() {
-	app := NewApp()
-	sshController := controllers.NewSSHController()
-
-	// 设置加密配置
-	// 注意：在实际应用中，密码不应硬编码在代码中，而应通过环境变量或用户输入获取
-	// 这里仅为演示目的使用固定密码
-	sshController.SetEncryptionConfig(true, "androidsr")
-
-	err := wails.Run(&options.App{
-		Title:  "那个谁SSH终端",
-		Width:  1100,
-		Height: 750,
-		AssetServer: &assetserver.Options{
-			Assets: assets,
-		},
-		BackgroundColour: &options.RGBA{R: 20, G: 20, B: 20, A: 1},
-		OnStartup: func(ctx context.Context) {
-			app.startup(ctx)
-			sshController.Startup(ctx)
-		},
-		Bind: []interface{}{
-			app,
-			sshController,
-		},
-		Windows: &windows.Options{
-			WebviewIsTransparent:              false,
-			WindowIsTranslucent:               false,
-			BackdropType:                      windows.Mica,
-			DisableWindowIcon:                 false,
-			DisableFramelessWindowDecorations: false,
-			WebviewUserDataPath:               "",
-			WebviewBrowserPath:                "",
-			Theme:                             windows.Dark,
+	app := application.New(application.Options{
+		Name:        "go-term",
+		Description: "智能SSH终端管理器 - 服务器管理、终端操作、文件管理、批量脚本执行",
+		Assets: application.AssetOptions{
+			Handler: application.AssetFileServerFS(assets),
 		},
 	})
 
+	// 注册服务（依赖注入 app 引用，供对话框/事件使用）
+	app.RegisterService(application.NewService(NewApp(app)))
+	app.RegisterService(application.NewService(controllers.NewSSHController(app)))
+
+	app.Window.NewWithOptions(application.WebviewWindowOptions{
+		Title:            "那个谁SSH终端",
+		Width:            1100,
+		Height:           750,
+		BackgroundColour: application.NewRGB(20, 20, 20),
+		Windows: application.WindowsWindow{
+			Theme: application.Dark,
+		},
+	})
+
+	// 系统托盘：SSH 终端工具常驻托盘，提供快速显示/退出入口
+	systray := app.SystemTray.New()
+	systray.SetIcon(appIcon)
+	systray.SetLabel("那个谁SSH终端")
+
+	trayMenu := app.NewMenu()
+	trayMenu.Add("显示主窗口").OnClick(func(ctx *application.Context) {
+		app.Window.Current().Show()
+	})
+	trayMenu.AddSeparator()
+	trayMenu.Add("退出").OnClick(func(ctx *application.Context) {
+		app.Quit()
+	})
+	systray.SetMenu(trayMenu)
+
+	err := app.Run()
 	if err != nil {
-		println("Error:", err.Error())
+		fmt.Println("Error:", err.Error())
 	}
 }
