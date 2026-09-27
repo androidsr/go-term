@@ -170,8 +170,8 @@ export class CommandOutput {
 }
 
 /**
- * OpsConfig 运维配置：集中存放服务器的部署方式、应用目录等信息，
- * 避免把这些运维知识散落到各处。
+ * OpsConfig 运维配置：一个轻量的配置笔记，集中存放用户自填的运维信息。
+ * 只保留最简字段：名称（用户自填）、关联项目（服务器）、以及一段自由文本（内容）。
  */
 export class OpsConfig {
     /**
@@ -188,7 +188,7 @@ export class OpsConfig {
         }
         if (!("name" in $$source)) {
             /**
-             * 配置名称，例如 "生产-订单服务"
+             * 配置名称，由用户自填，例如 "生产-订单服务"
              * @member
              * @type {string}
              */
@@ -196,67 +196,19 @@ export class OpsConfig {
         }
         if (!("serverId" in $$source)) {
             /**
-             * 关联的服务器ID
+             * 关联的项目/服务器ID，可留空表示通用配置
              * @member
              * @type {string}
              */
             this["serverId"] = "";
         }
-        if (!("deployMethod" in $$source)) {
+        if (!("content" in $$source)) {
             /**
-             * 部署方式: source(源码编译)/binary(二进制)/docker/docker-compose/k8s/systemd/other
+             * 自由文本内容，由用户在全窗口文本框中输入
              * @member
              * @type {string}
              */
-            this["deployMethod"] = "";
-        }
-        if (!("appDir" in $$source)) {
-            /**
-             * 应用所在目录
-             * @member
-             * @type {string}
-             */
-            this["appDir"] = "";
-        }
-        if (!("startCmd" in $$source)) {
-            /**
-             * 启动命令 / 启动脚本路径
-             * @member
-             * @type {string}
-             */
-            this["startCmd"] = "";
-        }
-        if (!("envVars" in $$source)) {
-            /**
-             * 环境变量（KEY=VALUE 每行一个）
-             * @member
-             * @type {string}
-             */
-            this["envVars"] = "";
-        }
-        if (!("repoUrl" in $$source)) {
-            /**
-             * 代码仓库地址（可选）
-             * @member
-             * @type {string}
-             */
-            this["repoUrl"] = "";
-        }
-        if (!("logsDir" in $$source)) {
-            /**
-             * 日志目录（可选）
-             * @member
-             * @type {string}
-             */
-            this["logsDir"] = "";
-        }
-        if (!("notes" in $$source)) {
-            /**
-             * 备注（可选）
-             * @member
-             * @type {string}
-             */
-            this["notes"] = "";
+            this["content"] = "";
         }
         if (!("updatedAt" in $$source)) {
             /**

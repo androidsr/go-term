@@ -13,7 +13,8 @@ import (
 	"go-term/models"
 )
 
-// OpsConfigManager 运维配置管理器：集中存储服务器的部署方式、应用目录等信息。
+// OpsConfigManager 运维配置管理器：集中存放用户自填的运维配置笔记
+// （名称 + 关联项目 + 自由文本），避免把运维知识散落到各处。
 type OpsConfigManager struct {
 	configs []models.OpsConfig
 	mu      sync.RWMutex
@@ -48,7 +49,39 @@ func (m *OpsConfigManager) LoadFromFile(filename string) error {
 
 	var loaded []models.OpsConfig
 	if err := json.Unmarshal(data, &loaded); err != nil {
-		return fmt.Errorf("无法解析运维配置文件: %v", err)
+		// 兼容旧版本：旧字段 notes 映射到新的 content，避免已有数据丢失
+		type legacyOpsConfig struct {
+			ID           string `json:"id"`
+			Name         string `json:"name"`
+			ServerID     string `json:"serverId"`
+			DeployMethod string `json:"deployMethod"`
+			AppDir       string `json:"appDir"`
+			StartCmd     string `json:"startCmd"`
+			EnvVars      string `json:"envVars"`
+			RepoURL      string `json:"repoUrl"`
+			LogsDir      string `json:"logsDir"`
+			Notes        string `json:"notes"`
+			Content      string `json:"content"`
+			UpdatedAt    string `json:"updatedAt"`
+		}
+		var legacy []legacyOpsConfig
+		if jerr := json.Unmarshal(data, &legacy); jerr != nil {
+			return fmt.Errorf("无法解析运维配置文件: %v", err)
+		}
+		loaded = make([]models.OpsConfig, 0, len(legacy))
+		for _, c := range legacy {
+			content := c.Content
+			if content == "" {
+				content = c.Notes // 旧数据的备注迁移为内容
+			}
+			loaded = append(loaded, models.OpsConfig{
+				ID:        c.ID,
+				Name:      c.Name,
+				ServerID:  c.ServerID,
+				Content:   content,
+				UpdatedAt: c.UpdatedAt,
+			})
+		}
 	}
 	m.configs = loaded
 	return nil
