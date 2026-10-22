@@ -6,6 +6,114 @@
 // @ts-ignore: Unused imports
 import { Create as $Create } from "@wailsio/runtime";
 
+// eslint-disable-next-line @typescript-eslint/ban-ts-comment
+// @ts-ignore: Unused imports
+import * as ssh$0 from "../../golang.org/x/crypto/ssh/models.js";
+
+/**
+ * AIConfig OpenAI 兼容大模型接口配置
+ */
+export class AIConfig {
+    /**
+     * Creates a new AIConfig instance.
+     * @param {Partial<AIConfig>} [$$source = {}] - The source object to create the AIConfig.
+     */
+    constructor($$source = {}) {
+        if (!("enabled" in $$source)) {
+            /**
+             * 是否启用 AI 能力
+             * @member
+             * @type {boolean}
+             */
+            this["enabled"] = false;
+        }
+        if (!("baseURL" in $$source)) {
+            /**
+             * OpenAI 兼容接口地址，如 https://api.openai.com/v1
+             * @member
+             * @type {string}
+             */
+            this["baseURL"] = "";
+        }
+        if (!("apiKey" in $$source)) {
+            /**
+             * API Key
+             * @member
+             * @type {string}
+             */
+            this["apiKey"] = "";
+        }
+        if (!("model" in $$source)) {
+            /**
+             * 模型名称，如 gpt-4o-mini
+             * @member
+             * @type {string}
+             */
+            this["model"] = "";
+        }
+        if (!("temperature" in $$source)) {
+            /**
+             * 温度参数
+             * @member
+             * @type {number}
+             */
+            this["temperature"] = 0;
+        }
+        if (!("maxTokens" in $$source)) {
+            /**
+             * 单次回复最大 token
+             * @member
+             * @type {number}
+             */
+            this["maxTokens"] = 0;
+        }
+        if (!("maxSteps" in $$source)) {
+            /**
+             * Agent 单任务最大执行轮次
+             * @member
+             * @type {number}
+             */
+            this["maxSteps"] = 0;
+        }
+        if (!("memoryRounds" in $$source)) {
+            /**
+             * 跨任务记忆轮数上限（0 表示不记忆）
+             * @member
+             * @type {number}
+             */
+            this["memoryRounds"] = 0;
+        }
+        if (!("systemHint" in $$source)) {
+            /**
+             * 附加系统提示词（用户自定义补充）
+             * @member
+             * @type {string}
+             */
+            this["systemHint"] = "";
+        }
+        if (!("useProxy" in $$source)) {
+            /**
+             * 是否通过系统代理访问接口（访问内网网关时应关闭）
+             * @member
+             * @type {boolean}
+             */
+            this["useProxy"] = false;
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new AIConfig instance from a string or object.
+     * @param {any} [$$source = {}]
+     * @returns {AIConfig}
+     */
+    static createFrom($$source = {}) {
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        return new AIConfig(/** @type {Partial<AIConfig>} */($$parsedSource));
+    }
+}
+
 /**
  * FileInfo 文件信息
  */
@@ -153,3 +261,42 @@ export class PortForward {
         return new PortForward(/** @type {Partial<PortForward>} */($$parsedSource));
     }
 }
+
+/**
+ * SSHConnection SSH连接信息
+ */
+export class SSHConnection {
+    /**
+     * Creates a new SSHConnection instance.
+     * @param {Partial<SSHConnection>} [$$source = {}] - The source object to create the SSHConnection.
+     */
+    constructor($$source = {}) {
+        if (!("Client" in $$source)) {
+            /**
+             * @member
+             * @type {ssh$0.Client | null}
+             */
+            this["Client"] = null;
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new SSHConnection instance from a string or object.
+     * @param {any} [$$source = {}]
+     * @returns {SSHConnection}
+     */
+    static createFrom($$source = {}) {
+        const $$createField0_0 = $$createType1;
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        if ("Client" in $$parsedSource) {
+            $$parsedSource["Client"] = $$createField0_0($$parsedSource["Client"]);
+        }
+        return new SSHConnection(/** @type {Partial<SSHConnection>} */($$parsedSource));
+    }
+}
+
+// Private type creation functions
+const $$createType0 = ssh$0.Client.createFrom;
+const $$createType1 = $Create.Nullable($$createType0);

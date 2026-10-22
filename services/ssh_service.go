@@ -6,6 +6,7 @@ import (
 	"io/ioutil"
 	"net"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -56,13 +57,23 @@ func (s *SSHConnection) Connect(host string, port int, username string, password
 		Timeout:         30 * time.Second,
 	}
 
-	address := fmt.Sprintf("%s:%d", host, port)
-	client, err := ssh.Dial("tcp", address, config)
+	address := net.JoinHostPort(host, strconv.Itoa(port))
+
+	// 使用带 TCP KeepAlive 的拨号：
+	// 1) NAT/防火墙静默删除会话表项时，TCP 保活能及时发现并报错，而不是半开挂起
+	// 2) 生成保活流量，降低空闲连接被中间设备掐断的概率
+	dialer := &net.Dialer{Timeout: 30 * time.Second, KeepAlive: 30 * time.Second}
+	tcpConn, err := dialer.Dial("tcp", address)
 	if err != nil {
 		return fmt.Errorf("无法连接到服务器: %v", err)
 	}
+	c, chans, reqs, err := ssh.NewClientConn(tcpConn, address, config)
+	if err != nil {
+		tcpConn.Close()
+		return fmt.Errorf("无法连接到服务器: %v", err)
+	}
 
-	s.Client = client
+	s.Client = ssh.NewClient(c, chans, reqs)
 	return nil
 }
 
@@ -91,7 +102,7 @@ func (s *SSHConnection) ConnectWithProxy(host string, port int, username, passwo
 		Timeout:         30 * time.Second,
 	}
 
-	address := fmt.Sprintf("%s:%d", host, port)
+	address := net.JoinHostPort(host, strconv.Itoa(port))
 	// 通过跳板机的 Dial 建立到目标主机的 TCP 隧道
 	conn, err := proxyClient.Dial("tcp", address)
 	if err != nil {

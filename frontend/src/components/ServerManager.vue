@@ -77,7 +77,8 @@
                 <a-table :dataSource="currentServers" :columns="serverColumns" :pagination="false" rowKey="id" size="small">
                   <template #bodyCell="{ column, record }">
                     <template v-if="column.dataIndex === 'status'">
-                      <a-tag :color="record.connected ? 'green' : 'red'">
+                      <a-tag :color="record.connected ? 'green' : 'default'">
+                        <span :class="record.connected ? 'status-dot-online' : 'status-dot-offline'"></span>
                         {{ record.connected ? '已连接' : '未连接' }}
                       </a-tag>
                     </template>
@@ -106,6 +107,15 @@
               </a-layout-content>
             </a-layout>
           </a-layout>
+        </a-tab-pane>
+
+        <!-- AI 助手标签页 -->
+        <a-tab-pane key="ai" :closable="false" force-render>
+          <template #tab>
+            <span>AI 助手</span>
+            <span v-if="aiTaskRunning" class="ai-running-dot" title="AI 任务运行中"></span>
+          </template>
+          <AIAssistant />
         </a-tab-pane>
 
         <!-- 批量脚本标签页 -->
@@ -317,34 +327,99 @@
     </a-modal>
 
     <!-- 设置模态框 -->
-    <a-modal v-model:open="settingsVisible" title="设置" @ok="saveSettings">
-      <a-form layout="vertical">
-        <a-form-item label="主题">
-          <a-radio-group v-model:value="settings.theme">
-            <a-radio value="dark">深色</a-radio>
-            <a-radio value="light">浅色</a-radio>
-          </a-radio-group>
-        </a-form-item>
-        <a-form-item label="字号">
-          <a-input-number v-model:value="settings.fontSize" :min="10" :max="28" />
-        </a-form-item>
-        <a-form-item label="光标样式">
-          <a-select v-model:value="settings.cursorStyle" style="width: 160px">
-            <a-select-option value="block">方块</a-select-option>
-            <a-select-option value="bar">竖线</a-select-option>
-            <a-select-option value="underline">下划线</a-select-option>
-          </a-select>
-        </a-form-item>
-        <a-form-item label="背景色">
-          <a-input type="color" v-model:value="settings.background" style="width: 80px" />
-        </a-form-item>
-        <a-form-item label="前景色">
-          <a-input type="color" v-model:value="settings.foreground" style="width: 80px" />
-        </a-form-item>
-        <a-form-item label="选中高亮">
-          <a-input type="color" v-model:value="settings.selection" style="width: 80px" />
-        </a-form-item>
-      </a-form>
+    <a-modal v-model:open="settingsVisible" title="设置" width="620px" @ok="saveSettings">
+      <a-tabs v-model:activeKey="settingsTab">
+        <!-- 终端外观 -->
+        <a-tab-pane key="terminal" tab="终端外观">
+          <a-form layout="vertical">
+            <a-form-item label="主题">
+              <a-radio-group v-model:value="settings.theme">
+                <a-radio value="dark">深色</a-radio>
+                <a-radio value="light">浅色</a-radio>
+              </a-radio-group>
+            </a-form-item>
+            <a-form-item label="字号">
+              <a-input-number v-model:value="settings.fontSize" :min="10" :max="28" />
+            </a-form-item>
+            <a-form-item label="光标样式">
+              <a-select v-model:value="settings.cursorStyle" style="width: 160px">
+                <a-select-option value="block">方块</a-select-option>
+                <a-select-option value="bar">竖线</a-select-option>
+                <a-select-option value="underline">下划线</a-select-option>
+              </a-select>
+            </a-form-item>
+            <a-form-item label="背景色">
+              <a-input type="color" v-model:value="settings.background" style="width: 80px" />
+            </a-form-item>
+            <a-form-item label="前景色">
+              <a-input type="color" v-model:value="settings.foreground" style="width: 80px" />
+            </a-form-item>
+            <a-form-item label="选中高亮">
+              <a-input type="color" v-model:value="settings.selection" style="width: 80px" />
+            </a-form-item>
+          </a-form>
+        </a-tab-pane>
+
+        <!-- AI 模型 -->
+        <a-tab-pane key="ai" tab="AI 模型">
+          <a-form layout="vertical">
+            <a-form-item label="启用 AI 功能">
+              <a-switch v-model:checked="aiForm.enabled" />
+              <span class="hint">在已连接的 SSH 会话中使用大模型进行智能运维</span>
+            </a-form-item>
+            <a-form-item label="接口地址（OpenAI 兼容）" required>
+              <a-input v-model:value="aiForm.baseURL" placeholder="例如：https://api.openai.com/v1 或 https://api.deepseek.com/v1" />
+            </a-form-item>
+            <a-form-item label="API Key" required>
+              <a-input-password v-model:value="aiForm.apiKey" placeholder="sk-..." />
+            </a-form-item>
+            <a-form-item label="模型名称" required>
+              <a-input v-model:value="aiForm.model" placeholder="例如：gpt-4o-mini / deepseek-chat / qwen-plus" />
+            </a-form-item>
+            <a-row :gutter="12">
+              <a-col :span="6">
+                <a-form-item label="温度">
+                  <a-input-number v-model:value="aiForm.temperature" :min="0" :max="2" :step="0.1" style="width: 100%" />
+                </a-form-item>
+              </a-col>
+              <a-col :span="6">
+                <a-form-item label="最大 Token">
+                  <a-input-number v-model:value="aiForm.maxTokens" :min="256" :max="65536" :step="256" style="width: 100%" />
+                </a-form-item>
+              </a-col>
+              <a-col :span="6">
+                <a-form-item label="最大执行轮次">
+                  <a-input-number v-model:value="aiForm.maxSteps" :min="1" :max="60" style="width: 100%" />
+                </a-form-item>
+              </a-col>
+              <a-col :span="6">
+                <a-form-item label="记忆轮数">
+                  <a-input-number v-model:value="aiForm.memoryRounds" :min="0" :max="50" style="width: 100%" />
+                </a-form-item>
+              </a-col>
+            </a-row>
+            <a-form-item>
+              <span class="hint">记忆轮数：AI 记住该服务器最近 N 次任务（做了什么、结论如何），0 表示不记忆。执行轮次是单次任务内 AI 最多执行命令的步数。</span>
+            </a-form-item>
+            <a-form-item label="附加提示词（可选）">
+              <a-textarea v-model:value="aiForm.systemHint" :rows="3"
+                placeholder="补充给 AI 的运维规范或偏好，例如：生产环境禁止直接重启服务" />
+            </a-form-item>
+            <a-form-item label="使用系统代理">
+              <a-switch v-model:checked="aiForm.useProxy" />
+              <span class="hint">访问内网网关（如 172.16.x.x、192.168.x.x）时请关闭，否则会被系统代理拦截导致连接失败</span>
+            </a-form-item>
+            <a-form-item>
+              <a-button :loading="aiTesting" @click="testAiConnection">
+                <ThunderboltOutlined /> 测试连接
+              </a-button>
+              <span v-if="aiTestResult" class="hint" :style="{ color: aiTestOk ? '#52c41a' : '#ff4d4f', marginLeft: '8px' }">
+                {{ aiTestResult }}
+              </span>
+            </a-form-item>
+          </a-form>
+        </a-tab-pane>
+      </a-tabs>
     </a-modal>
 
     <!-- 本地命令输出弹窗 -->
@@ -404,8 +479,10 @@ import FileManager from './FileManager.vue'
 import BatchScriptManager from './BatchScriptManager.vue'
 import OpsConfigManager from './OpsConfigManager.vue'
 import TaskCenter from './TaskCenter.vue'
+import AIAssistant from './AIAssistant.vue'
 import { taskStore } from '../store/taskStore.js'
 import { settingsStore, saveSettings as persistSettings } from '../store/settingsStore.js'
+import { GetAIConfig, SaveAIConfig, TestAIConnection } from '../../bindings/go-term/controllers/aicontroller'
 import {
   FolderOutlined,
   EditOutlined,
@@ -421,7 +498,8 @@ import {
   ApiOutlined,
   SettingOutlined,
   LinkOutlined,
-  BorderOutlined
+  BorderOutlined,
+  ThunderboltOutlined
 } from '@ant-design/icons-vue'
 
 export default {
@@ -432,6 +510,7 @@ export default {
     BatchScriptManager,
     OpsConfigManager,
     TaskCenter,
+    AIAssistant,
     FolderOutlined,
     EditOutlined,
     DeleteOutlined,
@@ -446,7 +525,8 @@ export default {
     ApiOutlined,
     SettingOutlined,
     LinkOutlined,
-    BorderOutlined
+    BorderOutlined,
+    ThunderboltOutlined
   },
   data() {
     return {
@@ -457,6 +537,7 @@ export default {
       currentGroupName: '请选择分组',
       currentServers: [],
       activeKey: 'home',
+      aiTaskRunning: false,
       terminalTabs: [],
       closedSessions: new Set(),
       pendingScript: null,
@@ -505,6 +586,17 @@ export default {
       // 设置
       settingsVisible: false,
       settings: { ...settingsStore },
+      settingsTab: 'terminal',
+
+      // AI 配置
+      aiForm: {
+        enabled: false, baseURL: 'https://api.openai.com/v1', apiKey: '',
+        model: 'gpt-4o-mini', temperature: 0.3, maxTokens: 2048, maxSteps: 25,
+        memoryRounds: 10, systemHint: '', useProxy: false
+      },
+      aiTesting: false,
+      aiTestResult: '',
+      aiTestOk: false,
 
       serverColumns: [
         { title: '服务器名称', dataIndex: 'name', key: 'name' },
@@ -561,6 +653,7 @@ export default {
     Events.On('terminal-session-closed', (event) => this.handleSessionClosed(event.data))
     Events.On('reconnecting', (event) => this.handleReconnecting(event.data))
     Events.On('reconnected', (event) => this.handleReconnected(event.data))
+    window.addEventListener('ai-task-status', this.handleAiTaskStatus)
   },
   beforeUnmount() {
     window.removeEventListener('execute-script-in-terminal', this.handleExecuteScriptInTerminal)
@@ -571,6 +664,7 @@ export default {
     Events.Off('terminal-session-closed')
     Events.Off('reconnecting')
     Events.Off('reconnected')
+    window.removeEventListener('ai-task-status', this.handleAiTaskStatus)
   },
   methods: {
     /* ========== 基础 ========== */
@@ -587,6 +681,11 @@ export default {
       } catch (error) {
         console.error('加载服务器分组失败:', error)
       }
+    },
+
+    /* ========== AI 助手 Tab 徽标 ========== */
+    handleAiTaskStatus(event) {
+      this.aiTaskRunning = !!(event.detail && event.detail.running)
     },
 
     onGroupSelect(info) {
@@ -1141,18 +1240,83 @@ export default {
     },
 
     /* ========== 设置 ========== */
-    showSettingsModal() {
+    async showSettingsModal() {
       this.settings = { ...settingsStore }
+      this.settingsTab = 'terminal'
+      this.aiTestResult = ''
+      // 加载 AI 配置
+      try {
+        const cfg = await GetAIConfig()
+        this.aiForm = {
+          enabled: !!cfg.enabled,
+          baseURL: cfg.baseURL || 'https://api.openai.com/v1',
+          apiKey: cfg.apiKey || '',
+          model: cfg.model || 'gpt-4o-mini',
+          temperature: cfg.temperature ?? 0.3,
+          maxTokens: cfg.maxTokens || 2048,
+          maxSteps: cfg.maxSteps || 25,
+          memoryRounds: cfg.memoryRounds ?? 10,
+          systemHint: cfg.systemHint || '',
+          useProxy: !!cfg.useProxy
+        }
+      } catch (e) { /* ignore */ }
       this.settingsVisible = true
     },
-    saveSettings() {
+    async saveSettings() {
       Object.assign(settingsStore, this.settings)
       persistSettings()
       window.dispatchEvent(new Event('apply-theme'))
+      // 保存 AI 配置
+      try {
+        await SaveAIConfig({
+          enabled: this.aiForm.enabled,
+          baseURL: (this.aiForm.baseURL || '').trim(),
+          apiKey: (this.aiForm.apiKey || '').trim(),
+          model: (this.aiForm.model || '').trim(),
+          temperature: Number(this.aiForm.temperature) || 0.3,
+          maxTokens: Number(this.aiForm.maxTokens) || 2048,
+          maxSteps: Number(this.aiForm.maxSteps) || 25,
+          memoryRounds: Number(this.aiForm.memoryRounds) || 0,
+          systemHint: this.aiForm.systemHint || '',
+          useProxy: !!this.aiForm.useProxy
+        })
+      } catch (e) {
+        this.$message.error(`保存 AI 配置失败: ${e.message}`)
+      }
       this.settingsVisible = false
       this.$message.success('设置已保存')
     },
+    async testAiConnection() {
+      if (!this.aiForm.baseURL?.trim() || !this.aiForm.apiKey?.trim() || !this.aiForm.model?.trim()) {
+        this.$message.warning('请先填写接口地址、API Key 与模型名称')
+        return
+      }
+      this.aiTesting = true
+      this.aiTestResult = ''
+      try {
+        const reply = await TestAIConnection({
+          enabled: true,
+          baseURL: (this.aiForm.baseURL || '').trim(),
+          apiKey: (this.aiForm.apiKey || '').trim(),
+          model: (this.aiForm.model || '').trim(),
+          temperature: Number(this.aiForm.temperature) || 0.3,
+          maxTokens: 64,
+          maxSteps: 25,
+          memoryRounds: 0,
+          systemHint: '',
+          useProxy: !!this.aiForm.useProxy
+        })
+        this.aiTestOk = true
+        this.aiTestResult = `连接成功，模型回复：${reply}`
+      } catch (e) {
+        this.aiTestOk = false
+        this.aiTestResult = e.message || String(e)
+      } finally {
+        this.aiTesting = false
+      }
+    },
 
+    /* ========== AI 助手 ========== */
     /* ========== 脚本执行到终端（保持原逻辑） ========== */
     async handleExecuteScriptInTerminal(event) {
       this.localCommandOutputs = []
@@ -1416,4 +1580,22 @@ export default {
   font-family: 'Monaco', 'Menlo', monospace; font-size: 13px; line-height: 1.5;
   white-space: pre-wrap; word-break: break-all; max-height: 40vh; overflow-y: auto;
 }
+
+/* AI 任务运行中 Tab 徽标 */
+.ai-running-dot {
+  display: inline-block; width: 8px; height: 8px; margin-left: 6px; vertical-align: 2px;
+  border-radius: 50%; background: #52c41a; animation: ai-pulse 1.2s ease-in-out infinite;
+}
+@keyframes ai-pulse {
+  0%, 100% { opacity: 0.35; transform: scale(0.75); }
+  50% { opacity: 1; transform: scale(1.2); }
+}
+
+/* 服务器在线状态小圆点 */
+.status-dot-online, .status-dot-offline {
+  display: inline-block; width: 6px; height: 6px; border-radius: 50%;
+  margin-right: 5px; vertical-align: 1px;
+}
+.status-dot-online { background: #52c41a; box-shadow: 0 0 4px rgba(82, 196, 26, 0.8); }
+.status-dot-offline { background: #bfbfbf; }
 </style>

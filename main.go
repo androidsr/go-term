@@ -25,8 +25,10 @@ func main() {
 	})
 
 	// 注册服务（依赖注入 app 引用，供对话框/事件使用）
+	sshController := controllers.NewSSHController(app)
 	app.RegisterService(application.NewService(NewApp(app)))
-	app.RegisterService(application.NewService(controllers.NewSSHController(app)))
+	app.RegisterService(application.NewService(sshController))
+	app.RegisterService(application.NewService(controllers.NewAIController(app, sshController)))
 
 	app.Window.NewWithOptions(application.WebviewWindowOptions{
 		Title:            "那个谁SSH终端",

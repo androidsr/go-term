@@ -16,6 +16,7 @@ import (
 
 	"github.com/pkg/sftp"
 	"github.com/wailsapp/wails/v3/pkg/application"
+	"golang.org/x/crypto/ssh"
 
 	"go-term/models"
 	"go-term/services"
@@ -168,6 +169,30 @@ func NewSSHController(app *application.App) *SSHController {
 	}
 }
 
+// GetConnection 获取指定服务器的 SSH 连接（供其他控制器复用已建立的连接）
+func (sc *SSHController) GetConnection(serverID string) *services.SSHConnection {
+	sc.mutex.RLock()
+	defer sc.mutex.RUnlock()
+	return sc.connections[serverID]
+}
+
+// GetAllConnectedServers 获取所有已连接的服务器列表
+func (sc *SSHController) GetAllConnectedServers() []models.Server {
+	groups := sc.serverManager.GetGroups()
+	var result []models.Server
+	for _, g := range groups {
+		for _, s := range g.Servers {
+			sc.mutex.RLock()
+			conn := sc.connections[s.ID]
+			sc.mutex.RUnlock()
+			if conn != nil && conn.Client != nil {
+				result = append(result, s)
+			}
+		}
+	}
+	return result
+}
+
 // helper: 获取或创建单个 server 的互斥锁
 func (sc *SSHController) getServerLock(serverID string) *sync.Mutex {
 	sc.locksMutex.Lock()
@@ -271,25 +296,28 @@ func (sc *SSHController) GetServerGroups() []models.ServerGroup {
 // GetServerConnectionStatus 获取服务器连接状态
 func (sc *SSHController) GetServerConnectionStatus() map[string]bool {
 	sc.mutex.RLock()
-	defer sc.mutex.RUnlock()
-
 	status := make(map[string]bool)
+	var deadServers []string
 
 	for serverID, conn := range sc.connections {
 		if conn != nil && conn.Client != nil {
-			// 更可靠的检查方式：使用 SendRequest 而不是创建新 session
-			// SendRequest "keepalive@openssh.com" 是轻量级检查，不会创建新 session
+			// 轻量级检查：SendRequest keepalive，不创建新 session
 			_, _, err := conn.Client.SendRequest("keepalive@openssh.com", true, nil)
 			if err == nil {
 				status[serverID] = true
 			} else {
-				// 连接已断开，清理
-				delete(sc.connections, serverID)
 				status[serverID] = false
+				deadServers = append(deadServers, serverID)
 			}
 		} else {
 			status[serverID] = false
 		}
+	}
+	sc.mutex.RUnlock()
+
+	// 统一走断线处理（清理资源+按配置自动重连），避免裸 delete 泄漏连接与终端会话
+	for _, serverID := range deadServers {
+		sc.handleConnectionLost(serverID)
 	}
 
 	return status
@@ -559,6 +587,9 @@ func (sc *SSHController) IsTerminalSessionActive(sessionID string) bool {
 }
 
 // isConnectionHealthy 检查连接健康状态
+// 注意：不要用 NewSession() 做检查 —— 它会占用 sshd 的 MaxSessions 配额且从不释放（泄漏），
+// 多次调用后耗尽配额导致后续 NewSession 全部失败，连接被误判为断开。
+// 改用轻量级的 keepalive 全局请求，不创建 channel、零副作用。
 func (sc *SSHController) isConnectionHealthy(serverID string) bool {
 	sc.mutex.RLock()
 	conn, exists := sc.connections[serverID]
@@ -568,17 +599,8 @@ func (sc *SSHController) isConnectionHealthy(serverID string) bool {
 		return false
 	}
 
-	// 简单的连通性检查
-	_, err := conn.Client.NewSession()
-	if err != nil {
-		// 连接已断开，清理
-		sc.mutex.Lock()
-		delete(sc.connections, serverID)
-		sc.mutex.Unlock()
-		return false
-	}
-
-	return true
+	_, _, err := conn.Client.SendRequest("keepalive@openssh.com", true, nil)
+	return err == nil
 }
 
 // isSessionActive 检查会话是否真正活跃
@@ -1131,6 +1153,7 @@ func (sc *SSHController) startHealthMonitor(serverID string) {
 	go func() {
 		ticker := time.NewTicker(15 * time.Second)
 		defer ticker.Stop()
+		failCount := 0
 		for {
 			select {
 			case <-ctx.Done():
@@ -1144,15 +1167,36 @@ func (sc *SSHController) startHealthMonitor(serverID string) {
 					cancel()
 					return
 				}
-				_, _, err := conn.Client.SendRequest("keepalive@openssh.com", true, nil)
-				if err != nil {
-					// 连接已失效
-					sc.handleConnectionLost(serverID)
-					return
+				// 带超时的 keepalive，防止半开连接导致永久阻塞
+				if !keepaliveWithTimeout(conn.Client, 12*time.Second) {
+					failCount++
+					// 容忍偶发瞬时抖动：连续 2 次失败才判定断线，避免误杀活跃连接
+					if failCount >= 2 {
+						sc.handleConnectionLost(serverID)
+						return
+					}
+					continue
 				}
+				failCount = 0
 			}
 		}
 	}()
+}
+
+// keepaliveWithTimeout 带超时的 keepalive 检查
+// SendRequest 本身没有超时机制，网络半开（NAT 静默丢表项等）时会永久挂起
+func keepaliveWithTimeout(client *ssh.Client, timeout time.Duration) bool {
+	done := make(chan error, 1)
+	go func() {
+		_, _, err := client.SendRequest("keepalive@openssh.com", true, nil)
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		return err == nil
+	case <-time.After(timeout):
+		return false
+	}
 }
 
 // stopHealthMonitor 停止健康检查

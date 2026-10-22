@@ -349,6 +349,16 @@ export function ExecuteCommandWithoutNewline(sessionID, command) {
 }
 
 /**
+ * GetAllConnectedServers 获取所有已连接的服务器列表
+ * @returns {$CancellablePromise<models$0.Server[]>}
+ */
+export function GetAllConnectedServers() {
+    return $Call.ByID(4198727558).then(/** @type {($result: any) => any} */(($result) => {
+        return $$createType4($result);
+    }));
+}
+
+/**
  * GetAutoCompleteSuggestions 获取自动补全建议
  * @param {string} sessionID
  * @param {string} partialCommand
@@ -375,7 +385,7 @@ export function GetAutoReconnect(serverID) {
  */
 export function GetBatchScripts() {
     return $Call.ByID(2440137272).then(/** @type {($result: any) => any} */(($result) => {
-        return $$createType4($result);
+        return $$createType6($result);
     }));
 }
 
@@ -387,6 +397,17 @@ export function GetBatchScripts() {
 export function GetCommandHistory(serverID) {
     return $Call.ByID(1648454059, serverID).then(/** @type {($result: any) => any} */(($result) => {
         return $$createType0($result);
+    }));
+}
+
+/**
+ * GetConnection 获取指定服务器的 SSH 连接（供其他控制器复用已建立的连接）
+ * @param {string} serverID
+ * @returns {$CancellablePromise<services$0.SSHConnection | null>}
+ */
+export function GetConnection(serverID) {
+    return $Call.ByID(1258571656, serverID).then(/** @type {($result: any) => any} */(($result) => {
+        return $$createType8($result);
     }));
 }
 
@@ -405,7 +426,7 @@ export function GetLastPath(serverID) {
  */
 export function GetOpsConfigs() {
     return $Call.ByID(2567766939).then(/** @type {($result: any) => any} */(($result) => {
-        return $$createType6($result);
+        return $$createType10($result);
     }));
 }
 
@@ -416,7 +437,7 @@ export function GetOpsConfigs() {
  */
 export function GetOpsConfigsByServer(serverID) {
     return $Call.ByID(2574129985, serverID).then(/** @type {($result: any) => any} */(($result) => {
-        return $$createType6($result);
+        return $$createType10($result);
     }));
 }
 
@@ -426,7 +447,7 @@ export function GetOpsConfigsByServer(serverID) {
  */
 export function GetServerConnectionStatus() {
     return $Call.ByID(499070653).then(/** @type {($result: any) => any} */(($result) => {
-        return $$createType7($result);
+        return $$createType11($result);
     }));
 }
 
@@ -436,7 +457,7 @@ export function GetServerConnectionStatus() {
  */
 export function GetServerGroups() {
     return $Call.ByID(2482326835).then(/** @type {($result: any) => any} */(($result) => {
-        return $$createType9($result);
+        return $$createType13($result);
     }));
 }
 
@@ -446,7 +467,7 @@ export function GetServerGroups() {
  */
 export function GetSnippets() {
     return $Call.ByID(591445970).then(/** @type {($result: any) => any} */(($result) => {
-        return $$createType11($result);
+        return $$createType15($result);
     }));
 }
 
@@ -507,7 +528,7 @@ export function IsTerminalSessionActive(sessionID) {
  */
 export function ListDirectory(serverID, path) {
     return $Call.ByID(308139975, serverID, path).then(/** @type {($result: any) => any} */(($result) => {
-        return $$createType13($result);
+        return $$createType17($result);
     }));
 }
 
@@ -518,7 +539,7 @@ export function ListDirectory(serverID, path) {
  */
 export function ListPortForwards(serverID) {
     return $Call.ByID(2715024629, serverID).then(/** @type {($result: any) => any} */(($result) => {
-        return $$createType15($result);
+        return $$createType19($result);
     }));
 }
 
@@ -644,16 +665,20 @@ export function UploadFileWithProgress(serverID, taskID, localPath, remotePath) 
 const $$createType0 = $Create.Array($Create.Any);
 const $$createType1 = models$0.ScriptExecution.createFrom;
 const $$createType2 = $Create.Map($Create.Any, $$createType1);
-const $$createType3 = models$0.BatchScript.createFrom;
+const $$createType3 = models$0.Server.createFrom;
 const $$createType4 = $Create.Array($$createType3);
-const $$createType5 = models$0.OpsConfig.createFrom;
+const $$createType5 = models$0.BatchScript.createFrom;
 const $$createType6 = $Create.Array($$createType5);
-const $$createType7 = $Create.Map($Create.Any, $Create.Any);
-const $$createType8 = models$0.ServerGroup.createFrom;
-const $$createType9 = $Create.Array($$createType8);
-const $$createType10 = models$0.Snippet.createFrom;
-const $$createType11 = $Create.Array($$createType10);
-const $$createType12 = services$0.FileInfo.createFrom;
+const $$createType7 = services$0.SSHConnection.createFrom;
+const $$createType8 = $Create.Nullable($$createType7);
+const $$createType9 = models$0.OpsConfig.createFrom;
+const $$createType10 = $Create.Array($$createType9);
+const $$createType11 = $Create.Map($Create.Any, $Create.Any);
+const $$createType12 = models$0.ServerGroup.createFrom;
 const $$createType13 = $Create.Array($$createType12);
-const $$createType14 = services$0.PortForward.createFrom;
+const $$createType14 = models$0.Snippet.createFrom;
 const $$createType15 = $Create.Array($$createType14);
+const $$createType16 = services$0.FileInfo.createFrom;
+const $$createType17 = $Create.Array($$createType16);
+const $$createType18 = services$0.PortForward.createFrom;
+const $$createType19 = $Create.Array($$createType18);
