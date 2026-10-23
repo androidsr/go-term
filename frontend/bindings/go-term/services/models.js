@@ -9,6 +9,9 @@ import { Create as $Create } from "@wailsio/runtime";
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore: Unused imports
 import * as ssh$0 from "../../golang.org/x/crypto/ssh/models.js";
+// eslint-disable-next-line @typescript-eslint/ban-ts-comment
+// @ts-ignore: Unused imports
+import * as io$0 from "../../io/models.js";
 
 /**
  * AIConfig OpenAI 兼容大模型接口配置
@@ -297,6 +300,61 @@ export class SSHConnection {
     }
 }
 
+export class TerminalSession {
+    /**
+     * Creates a new TerminalSession instance.
+     * @param {Partial<TerminalSession>} [$$source = {}] - The source object to create the TerminalSession.
+     */
+    constructor($$source = {}) {
+        if (!("Session" in $$source)) {
+            /**
+             * @member
+             * @type {ssh$0.Session | null}
+             */
+            this["Session"] = null;
+        }
+        if (!("Stdin" in $$source)) {
+            /**
+             * @member
+             * @type {io$0.WriteCloser}
+             */
+            this["Stdin"] = null;
+        }
+        if (!("OutputChan" in $$source)) {
+            /**
+             * @member
+             * @type {any}
+             */
+            this["OutputChan"] = null;
+        }
+        if (!("ErrorChan" in $$source)) {
+            /**
+             * @member
+             * @type {any}
+             */
+            this["ErrorChan"] = null;
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new TerminalSession instance from a string or object.
+     * @param {any} [$$source = {}]
+     * @returns {TerminalSession}
+     */
+    static createFrom($$source = {}) {
+        const $$createField0_0 = $$createType3;
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        if ("Session" in $$parsedSource) {
+            $$parsedSource["Session"] = $$createField0_0($$parsedSource["Session"]);
+        }
+        return new TerminalSession(/** @type {Partial<TerminalSession>} */($$parsedSource));
+    }
+}
+
 // Private type creation functions
 const $$createType0 = ssh$0.Client.createFrom;
 const $$createType1 = $Create.Nullable($$createType0);
+const $$createType2 = ssh$0.Session.createFrom;
+const $$createType3 = $Create.Nullable($$createType2);

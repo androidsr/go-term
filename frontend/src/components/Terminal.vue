@@ -1,6 +1,13 @@
 <template>
-  <div class="terminal-container" @dragover.prevent="onDragOver" @dragleave="onDragLeave" @drop="handleDrop">
+  <div class="terminal-container" :style="{ '--term-bg': terminalBg }"
+    @dragover.prevent="onDragOver" @dragleave="onDragLeave" @drop="handleDrop">
     <div ref="terminalElement" class="terminal-element" @contextmenu="handleContextMenu"></div>
+
+    <!-- 脚本执行中：锁定输入遮罩 -->
+    <div v-if="inputLocked" class="lock-overlay">
+      <LockOutlined style="font-size: 20px" />
+      <span>脚本执行中，终端输入已锁定（Ctrl+C 可中断）</span>
+    </div>
 
     <!-- 终端内查找（基于缓冲区，无需额外依赖） -->
     <div v-if="findVisible" class="find-bar">
@@ -69,7 +76,8 @@ import {
   ScissorOutlined,
   StopOutlined,
   ClearOutlined,
-  SearchOutlined
+  SearchOutlined,
+  LockOutlined
 } from '@ant-design/icons-vue'
 
 export default {
@@ -79,7 +87,8 @@ export default {
     ScissorOutlined,
     StopOutlined,
     ClearOutlined,
-    SearchOutlined
+    SearchOutlined,
+    LockOutlined
   },
   props: {
     server: Object,
@@ -109,7 +118,16 @@ export default {
       dropActive: false,
       remoteBase: '.',
       resizeObserver: null,
-      fitRaf: null
+      fitRaf: null,
+      // 脚本执行期间锁定键盘输入，防止用户输入干扰脚本（如 cd 改变目录）
+      inputLocked: false
+    }
+  },
+
+  computed: {
+    // 终端底色跟随设置（主题切换时 App.vue 会同步预设值到这里）
+    terminalBg() {
+      return settingsStore.background || '#1e1e1e'
     }
   },
 
@@ -131,6 +149,7 @@ export default {
     this.setupOutputListener()
     this.$emit('terminal-ready', this.sessionId)
     window.addEventListener('apply-theme', this.applyTerminalOptions)
+    window.addEventListener('terminal-input-lock', this.handleInputLock)
     // 记录上传基准目录
     try {
       const p = await GetLastPath(this.serverId)
@@ -143,6 +162,7 @@ export default {
   beforeUnmount() {
     window.removeEventListener('resize', this.onResize)
     window.removeEventListener('apply-theme', this.applyTerminalOptions)
+    window.removeEventListener('terminal-input-lock', this.handleInputLock)
 
     if (this.resizeObserver) {
       this.resizeObserver.disconnect()
@@ -256,12 +276,28 @@ export default {
     },
 
     /* ========== 数据处理 ========== */
+    // 脚本执行锁定：只响应目标为本会话的锁定事件
+    handleInputLock(e) {
+      const d = e.detail || {}
+      if (d.sessionId === this.sessionId) this.inputLocked = !!d.locked
+    },
+
     onData: async function (data) {
+      // 锁定期间丢弃一切普通输入，防止用户敲键干扰脚本执行
+      if (this.inputLocked) return
       await ExecuteCommandWithoutNewline(this.sessionId, data)
     },
 
     onKey: async function (e) {
       const ev = e.domEvent
+
+      // Ctrl+C 始终放行：脚本执行中也能中断远程命令
+      if (ev.ctrlKey && ev.key === 'c') {
+        ev.preventDefault()
+        await ExecuteCommandWithoutNewline(this.sessionId, '\x03')
+        return
+      }
+      if (this.inputLocked) return
 
       if (ev.ctrlKey && ev.key === 'l') {
         ev.preventDefault()
@@ -523,7 +559,7 @@ export default {
           percent: 0,
           status: 'transferring'
         })
-        taskStore.openDrawer('transfer')
+        // 后台任务化：不自动弹出任务中心
         await UploadFileWithProgress(this.serverId, taskID, localPath, remotePath)
         taskStore.updateTransfer(taskID, { status: 'done', percent: 100 })
       } catch (err) {
@@ -541,9 +577,28 @@ export default {
   display: flex;
   flex-direction: column;
   margin: 0;
-  background: #1e1e1e;
+  background: var(--term-bg, #1e1e1e);
   overflow: hidden;
   position: relative;
+}
+
+/* 脚本执行中锁定提示 */
+.lock-overlay {
+  position: absolute;
+  top: 8px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 10004;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 14px;
+  border-radius: 16px;
+  background: rgba(0, 0, 0, 0.65);
+  color: #ffe58f;
+  font-size: 12.5px;
+  pointer-events: none;
+  border: 1px solid rgba(255, 229, 143, 0.35);
 }
 
 .terminal-element {
@@ -557,27 +612,27 @@ export default {
 .terminal-element :deep(.xterm) {
   height: 100% !important;
   width: 100% !important;
-  background-color: #1e1e1e !important;
+  background-color: var(--term-bg, #1e1e1e) !important;
   border-radius: 0 !important;
   margin: 0 !important;
   image-rendering: pixelated;
 }
 
 .terminal-element :deep(.xterm-viewport) {
-  background-color: #1e1e1e !important;
-  scrollbar-color: #666 #1e1e1e;
+  background-color: var(--term-bg, #1e1e1e) !important;
+  scrollbar-color: #666 var(--term-bg, #1e1e1e);
   transform: translateZ(0);
   will-change: scroll-position;
 }
 
 .terminal-element :deep(.xterm-screen) {
-  background-color: #1e1e1e !important;
+  background-color: var(--term-bg, #1e1e1e) !important;
   padding: 0 !important;
   margin: 0 !important;
 }
 
 .terminal-element :deep(.xterm-helper-textarea) {
-  background-color: #1e1e1e !important;
+  background-color: var(--term-bg, #1e1e1e) !important;
 }
 
 .terminal-element :deep(.xterm-selection) {
@@ -597,7 +652,7 @@ export default {
   width: 8px;
 }
 .terminal-element :deep(.xterm-viewport::-webkit-scrollbar-track) {
-  background: #1e1e1e;
+  background: var(--term-bg, #1e1e1e);
 }
 .terminal-element :deep(.xterm-viewport::-webkit-scrollbar-thumb) {
   background: #666;
@@ -615,14 +670,14 @@ export default {
   display: flex;
   align-items: center;
   gap: 6px;
-  background: #2d2d2d;
+  background: var(--app-bg-panel, #2d2d2d);
   padding: 6px 8px;
   border-radius: 4px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
-  border: 1px solid #444;
+  box-shadow: var(--app-shadow, 0 2px 8px rgba(0, 0, 0, 0.35));
+  border: 1px solid var(--app-border, #444);
 }
 .find-count {
-  color: #bbb;
+  color: var(--app-text-secondary, #bbb);
   font-size: 12px;
   min-width: 40px;
   text-align: center;

@@ -38,6 +38,45 @@ type TerminalSession struct {
 	// 意外断开回调：当底层连接被远端关闭（如 vi 卡死、网络中断）时触发
 	onUnexpectedClose func()
 	closedFlag        int32 // 0=未关闭 1=已正常关闭
+
+	// 输出订阅者（供 AI 交互模式等场景捕获终端输出）
+	subMu       sync.Mutex
+	subscribers map[int]chan string
+	subSeq      int
+}
+
+// SubscribeOutput 订阅终端输出，返回订阅通道与取消函数。
+// 通道带缓冲，消费不及时会丢弃最旧数据（与 OutputChan 策略一致）。
+func (ts *TerminalSession) SubscribeOutput() (<-chan string, func()) {
+	ts.subMu.Lock()
+	defer ts.subMu.Unlock()
+	if ts.subscribers == nil {
+		ts.subscribers = make(map[int]chan string)
+	}
+	ts.subSeq++
+	id := ts.subSeq
+	ch := make(chan string, 256)
+	ts.subscribers[id] = ch
+	return ch, func() {
+		ts.subMu.Lock()
+		defer ts.subMu.Unlock()
+		if c, ok := ts.subscribers[id]; ok {
+			close(c)
+			delete(ts.subscribers, id)
+		}
+	}
+}
+
+// notifySubscribers 向所有订阅者分发输出（非阻塞，满则丢弃该块）
+func (ts *TerminalSession) notifySubscribers(data string) {
+	ts.subMu.Lock()
+	defer ts.subMu.Unlock()
+	for _, ch := range ts.subscribers {
+		select {
+		case ch <- data:
+		default:
+		}
+	}
 }
 
 func (s *SSHConnection) CreateTerminalSession(width, height int) (*TerminalSession, error) {
@@ -112,6 +151,7 @@ func (ts *TerminalSession) readLoop(r io.Reader, out chan []byte) {
 				// 必须复制，否则 buf 复用导致数据错乱
 				data := make([]byte, n)
 				copy(data, buf[:n])
+				ts.notifySubscribers(string(data))
 				// 检查通道是否已关闭，使用非阻塞发送避免在高输出时阻塞
 				select {
 				case out <- data:
@@ -510,18 +550,85 @@ func (ts *TerminalSession) Close() error {
 			}
 		}()
 
-		// 等待两个关闭操作完成或超时
-		for i := 0; i < 2; i++ {
-			select {
-			case closeErr := <-errCh:
-				if closeErr != nil && err == nil {
-					err = closeErr
-				}
-			case <-ctx.Done():
-				err = fmt.Errorf("terminal session close timeout")
-				return
+	// 等待两个关闭操作完成或超时
+	for i := 0; i < 2; i++ {
+		select {
+		case closeErr := <-errCh:
+			if closeErr != nil && err == nil {
+				err = closeErr
 			}
+		case <-ctx.Done():
+			err = fmt.Errorf("terminal session close timeout")
+			return
 		}
+	}
 	})
 	return err
+}
+
+// InteractiveExecute 模拟人工输入：把命令写入真实终端会话（用户能像看人操作一样看到每个字符），
+// 同时捕获终端输出；输出静默（1.5 秒无新输出）视为命令执行完成。
+// 返回清洗 ANSI 转义后的输出文本。
+func (ts *TerminalSession) InteractiveExecute(command string, onChunk func(string), timeout time.Duration, stop <-chan struct{}) (string, int, error) {
+	if ts.Stdin == nil {
+		return "", -1, fmt.Errorf("终端会话不可用")
+	}
+	if ts.IsClosed() {
+		return "", -1, fmt.Errorf("终端会话已关闭")
+	}
+	if timeout <= 0 {
+		timeout = 10 * time.Minute
+	}
+
+	outputCh, unsub := ts.SubscribeOutput()
+	defer unsub()
+
+	// 像人一样写入命令并回车
+	if _, err := io.WriteString(ts.Stdin, command+"\n"); err != nil {
+		return "", -1, fmt.Errorf("向终端写入命令失败: %v", err)
+	}
+
+	const quietPeriod = 1500 * time.Millisecond
+	deadline := time.Now().Add(timeout)
+	var raw strings.Builder
+
+	quietTimer := time.NewTimer(quietPeriod)
+	defer quietTimer.Stop()
+
+	for {
+		remaining := time.Until(deadline)
+		if remaining <= 0 {
+			return stripANSI(raw.String()), -1, fmt.Errorf("命令执行超时（%s）", timeout)
+		}
+		select {
+		case <-stop:
+			return stripANSI(raw.String()), -1, fmt.Errorf("任务已被用户停止")
+		case s, ok := <-outputCh:
+			if !ok {
+				// 订阅被取消（会话关闭等）
+				return stripANSI(raw.String()), -1, fmt.Errorf("终端会话已关闭")
+			}
+			raw.WriteString(s)
+			if onChunk != nil {
+				onChunk(s)
+			}
+			if !quietTimer.Stop() {
+				select {
+				case <-quietTimer.C:
+				default:
+				}
+			}
+			quietTimer.Reset(quietPeriod)
+		case <-quietTimer.C:
+			// 输出静默，认为命令已执行完成
+			return stripANSI(raw.String()), 0, nil
+		case <-time.After(remaining):
+			return stripANSI(raw.String()), -1, fmt.Errorf("命令执行超时（%s）", timeout)
+		}
+	}
+}
+
+// stripANSI 清理 ANSI 转义序列（供回传给 AI 的文本使用）
+func stripANSI(s string) string {
+	return removeANSIEscapeSequences(s)
 }

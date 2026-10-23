@@ -6,6 +6,10 @@
 // @ts-ignore: Unused imports
 import { Create as $Create } from "@wailsio/runtime";
 
+// eslint-disable-next-line @typescript-eslint/ban-ts-comment
+// @ts-ignore: Unused imports
+import * as io$0 from "../../../../io/models.js";
+
 /**
  * Client implements a traditional SSH client that supports shells,
  * subprocesses, TCP port/streamlocal forwarding and tunneled dialing.
@@ -45,3 +49,59 @@ export class Client {
  * clients.
  * @typedef {any} Conn
  */
+
+/**
+ * A Session represents a connection to a remote command or shell.
+ */
+export class Session {
+    /**
+     * Creates a new Session instance.
+     * @param {Partial<Session>} [$$source = {}] - The source object to create the Session.
+     */
+    constructor($$source = {}) {
+        if (!("Stdin" in $$source)) {
+            /**
+             * Stdin specifies the remote process's standard input.
+             * If Stdin is nil, the remote process reads from an empty
+             * bytes.Buffer.
+             * @member
+             * @type {io$0.Reader}
+             */
+            this["Stdin"] = null;
+        }
+        if (!("Stdout" in $$source)) {
+            /**
+             * Stdout and Stderr specify the remote process's standard
+             * output and error.
+             * 
+             * If either is nil, Run connects the corresponding file
+             * descriptor to an instance of io.Discard. There is a
+             * fixed amount of buffering that is shared for the two streams.
+             * If either blocks it may eventually cause the remote
+             * command to block.
+             * @member
+             * @type {io$0.Writer}
+             */
+            this["Stdout"] = null;
+        }
+        if (!("Stderr" in $$source)) {
+            /**
+             * @member
+             * @type {io$0.Writer}
+             */
+            this["Stderr"] = null;
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new Session instance from a string or object.
+     * @param {any} [$$source = {}]
+     * @returns {Session}
+     */
+    static createFrom($$source = {}) {
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        return new Session(/** @type {Partial<Session>} */($$parsedSource));
+    }
+}

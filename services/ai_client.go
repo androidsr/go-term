@@ -148,6 +148,11 @@ func wrapCallError(err error, transport *capturingTransport, endpoint string) er
 
 // ChatStream 流式对话：每收到一段增量文本调用 onDelta；返回完整回复文本
 func (c *AIClient) ChatStream(messages []ChatMessage, onDelta func(text string)) (string, error) {
+	return c.ChatStreamWithStop(messages, onDelta, nil)
+}
+
+// ChatStreamWithStop 流式对话，支持外部停止：stop 通道关闭时立即中断请求
+func (c *AIClient) ChatStreamWithStop(messages []ChatMessage, onDelta func(text string), stop <-chan struct{}) (string, error) {
 	llm, transport, err := c.newLLM()
 	if err != nil {
 		return "", err
@@ -156,6 +161,15 @@ func (c *AIClient) ChatStream(messages []ChatMessage, onDelta func(text string))
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
+	if stop != nil {
+		go func() {
+			select {
+			case <-stop:
+				cancel() // 立即中断底层 HTTP 请求
+			case <-ctx.Done():
+			}
+		}()
+	}
 
 	callOpts := []llms.CallOption{
 		llms.WithMaxTokens(c.cfg.MaxTokens),
@@ -172,6 +186,10 @@ func (c *AIClient) ChatStream(messages []ChatMessage, onDelta func(text string))
 
 	resp, err := llm.GenerateContent(ctx, toLLMMessages(messages), callOpts...)
 	if err != nil {
+		// 用户主动停止导致的取消不算错误
+		if ctx.Err() == context.Canceled || strings.Contains(err.Error(), "context canceled") {
+			return "", fmt.Errorf("任务已被用户停止")
+		}
 		return "", wrapCallError(err, transport, endpoint)
 	}
 	if resp == nil || len(resp.Choices) == 0 {

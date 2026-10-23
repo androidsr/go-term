@@ -38,20 +38,31 @@
               <div class="group-section">
                 <div class="group-header">
                   <h3>服务器分组</h3>
-                  <a-button type="primary" size="small" @click="showAddGroupModal">+</a-button>
+                  <a-tooltip title="新建分组">
+                    <a-button type="primary" size="small" @click="showAddGroupModal">
+                      <PlusOutlined />
+                    </a-button>
+                  </a-tooltip>
                 </div>
-                <a-menu :selectedKeys="selectedGroupKeys" mode="inline" @select="onGroupSelect">
-                  <a-menu-item v-for="group in groups" :key="group.id">
-                    <template #icon>
-                      <FolderOutlined />
-                    </template>
-                    {{ group.name }}
-                    <span class="group-actions">
-                      <EditOutlined @click.stop="editGroup(group)" />
-                      <DeleteOutlined @click.stop="deleteGroup(group.id)" />
+                <div class="group-list">
+                  <div v-for="group in groups" :key="group.id" class="group-item"
+                    :class="{ active: selectedGroupKeys.includes(group.id) }" @click="selectGroup(group)">
+                    <FolderOutlined class="group-icon" />
+                    <span class="group-name" :title="group.name">{{ group.name }}</span>
+                    <span class="group-count">{{ group.servers.length }}</span>
+                    <span class="group-actions" @click.stop>
+                      <a-tooltip title="编辑分组">
+                        <EditOutlined @click="editGroup(group)" />
+                      </a-tooltip>
+                      <a-tooltip title="删除分组">
+                        <DeleteOutlined class="danger" @click="deleteGroup(group.id)" />
+                      </a-tooltip>
                     </span>
-                  </a-menu-item>
-                </a-menu>
+                  </div>
+                  <div v-if="!groups.length" class="group-empty">
+                    暂无分组<br />点击右上角 + 新建
+                  </div>
+                </div>
               </div>
             </a-layout-sider>
 
@@ -74,7 +85,7 @@
                   </a-button>
                 </div>
 
-                <a-table :dataSource="currentServers" :columns="serverColumns" :pagination="false" rowKey="id" size="small">
+                <a-table :dataSource="currentServers" :columns="serverColumns" :pagination="false" rowKey="id" :size="tableSize">
                   <template #bodyCell="{ column, record }">
                     <template v-if="column.dataIndex === 'status'">
                       <a-tag :color="record.connected ? 'green' : 'default'">
@@ -90,6 +101,10 @@
                         </a-button>
                         <a-button size="small" :disabled="!record.connected" @click="openTerminal(record)">
                           <CodeOutlined />终端
+                        </a-button>
+                        <a-button size="small" :disabled="!record.connected" @click="openAIAssistant(record)"
+                          title="AI 助手：让 AI 自动完成运维任务">
+                          <RobotOutlined />AI
                         </a-button>
                         <a-button size="small" :disabled="!record.connected" @click="manageFiles(record)">
                           <FolderOpenOutlined />文件
@@ -107,15 +122,6 @@
               </a-layout-content>
             </a-layout>
           </a-layout>
-        </a-tab-pane>
-
-        <!-- AI 助手标签页 -->
-        <a-tab-pane key="ai" :closable="false" force-render>
-          <template #tab>
-            <span>AI 助手</span>
-            <span v-if="aiTaskRunning" class="ai-running-dot" title="AI 任务运行中"></span>
-          </template>
-          <AIAssistant />
         </a-tab-pane>
 
         <!-- 批量脚本标签页 -->
@@ -149,6 +155,15 @@
           <div v-else-if="tab.type === 'file'" style="height: 100%; padding: 0; margin: 0">
             <FileManager :server="tab.server" :server-id="tab.serverId" />
           </div>
+        </a-tab-pane>
+
+        <!-- AI 助手标签页（按服务器动态创建，点击服务器行的 AI 按钮才会出现，每个连接一个独立会话） -->
+        <a-tab-pane v-for="tab in aiTabs" :key="tab.id" closable force-render>
+          <template #tab>
+            <span>AI · {{ tab.name }}</span>
+            <span v-if="aiRunningSet.has(tab.serverId)" class="ai-running-dot" title="AI 任务运行中"></span>
+          </template>
+          <AIAssistant :server-id="tab.serverId" :server-name="tab.name" />
         </a-tab-pane>
       </a-tabs>
     </div>
@@ -212,7 +227,7 @@
         <a-button type="primary" size="small" @click="openSnippetEdit()"><PlusOutlined />新建片段</a-button>
         <span class="hint">点击「发送」将内容发送到当前终端</span>
       </div>
-      <a-table :dataSource="snippets" :columns="snippetColumns" :pagination="false" rowKey="id" size="small">
+      <a-table :dataSource="snippets" :columns="snippetColumns" :pagination="false" rowKey="id" :size="tableSize">
         <template #bodyCell="{ column, record }">
           <template v-if="column.dataIndex === 'content'">
             <code class="snippet-content">{{ record.content }}</code>
@@ -296,7 +311,7 @@
           <a-button type="primary" @click="addTunnel">添加转发</a-button>
         </a-form-item>
       </a-form>
-      <a-table :dataSource="tunnels" :columns="tunnelColumns" :pagination="false" rowKey="id" size="small" style="margin-top: 12px">
+      <a-table :dataSource="tunnels" :columns="tunnelColumns" :pagination="false" rowKey="id" :size="tableSize" style="margin-top: 12px">
         <template #bodyCell="{ column, record }">
           <template v-if="column.dataIndex === 'type'">
             <a-tag :color="record.type === 'local' ? 'blue' : 'purple'">
@@ -314,7 +329,7 @@
     <a-modal v-model:open="splitPickerVisible" title="分屏：选择要并排的服务器" width="560px" :footer="null">
       <a-alert type="info" show-icon style="margin-bottom: 12px"
         message="选中的服务器终端会并排到当前视图；可多次分屏，也可选当前服务器做多 Shell。" />
-      <a-table :dataSource="allServers" :columns="splitColumns" :pagination="false" rowKey="id" size="small">
+      <a-table :dataSource="allServers" :columns="splitColumns" :pagination="false" rowKey="id" :size="tableSize">
         <template #bodyCell="{ column, record }">
           <template v-if="column.dataIndex === 'status'">
             <a-tag :color="record.connected ? 'green' : 'default'">{{ record.connected ? '已连接' : '未连接' }}</a-tag>
@@ -336,6 +351,14 @@
               <a-radio-group v-model:value="settings.theme">
                 <a-radio value="dark">深色</a-radio>
                 <a-radio value="light">浅色</a-radio>
+              </a-radio-group>
+              <span class="hint">切换时终端配色自动跟随主题更新</span>
+            </a-form-item>
+            <a-form-item label="组件大小（全局界面元素尺寸）">
+              <a-radio-group v-model:value="settings.componentSize">
+                <a-radio value="small">小</a-radio>
+                <a-radio value="middle">中</a-radio>
+                <a-radio value="large">大</a-radio>
               </a-radio-group>
             </a-form-item>
             <a-form-item label="字号">
@@ -422,24 +445,6 @@
       </a-tabs>
     </a-modal>
 
-    <!-- 本地命令输出弹窗 -->
-    <a-modal v-model:open="localCommandOutputVisible" title="本地命令输出" width="800px" :footer="null"
-      :bodyStyle="{ maxHeight: '60vh', overflow: 'hidden' }">
-      <div class="local-command-output">
-        <div class="output-container">
-          <div v-for="(item, index) in localCommandOutputs" :key="index" class="command-item">
-            <div class="command-header">
-              <span class="command-number">[{{ index + 1 }}]</span>
-              <strong>命令:</strong>
-              <code>{{ item.command }}</code>
-            </div>
-            <div class="output-header"><strong>输出:</strong></div>
-            <pre class="output-content">{{ item.output }}</pre>
-          </div>
-        </div>
-      </div>
-    </a-modal>
-
     <!-- 任务中心 -->
     <TaskCenter />
   </div>
@@ -499,7 +504,8 @@ import {
   SettingOutlined,
   LinkOutlined,
   BorderOutlined,
-  ThunderboltOutlined
+  ThunderboltOutlined,
+  RobotOutlined
 } from '@ant-design/icons-vue'
 
 export default {
@@ -526,7 +532,8 @@ export default {
     SettingOutlined,
     LinkOutlined,
     BorderOutlined,
-    ThunderboltOutlined
+    ThunderboltOutlined,
+    RobotOutlined
   },
   data() {
     return {
@@ -537,13 +544,11 @@ export default {
       currentGroupName: '请选择分组',
       currentServers: [],
       activeKey: 'home',
-      aiTaskRunning: false,
+      aiTabs: [], // AI 助手动态标签：{ id, serverId, name }
+      aiRunningSet: new Set(), // 正在运行 AI 任务的服务器集合（Tab 徽标）
       terminalTabs: [],
       closedSessions: new Set(),
       pendingScript: null,
-
-      localCommandOutputVisible: false,
-      localCommandOutputs: [],
 
       groupModalVisible: false,
       editingGroup: null,
@@ -630,6 +635,11 @@ export default {
     taskStore() {
       return taskStore
     },
+    // 表格尺寸跟随设置中的组件大小（小/中/大 → antd 表格 small/middle/default）
+    tableSize() {
+      const s = settingsStore.componentSize
+      return s === 'small' ? 'small' : s === 'large' ? 'default' : 'middle'
+    },
     activeIsTerminal() {
       const tab = this.terminalTabs.find((t) => t.id === this.activeKey)
       return !!(tab && tab.type === 'terminal')
@@ -683,22 +693,38 @@ export default {
       }
     },
 
-    /* ========== AI 助手 Tab 徽标 ========== */
+    /* ========== AI 助手动态标签 ========== */
     handleAiTaskStatus(event) {
-      this.aiTaskRunning = !!(event.detail && event.detail.running)
+      const d = event.detail || {}
+      if (d.running && d.serverId) {
+        this.aiRunningSet.add(d.serverId)
+      } else {
+        this.aiRunningSet.delete(d.serverId)
+      }
     },
 
-    onGroupSelect(info) {
-      const selectedKeys = info.selectedKeys
-      if (selectedKeys.length > 0) {
-        this.selectedGroupKeys = [selectedKeys[0]]
-        this.currentGroupId = selectedKeys[0]
-        const group = this.groups.find((g) => g.id === selectedKeys[0])
-        if (group) {
-          this.currentGroupName = group.name
-          this.currentServers = [...group.servers]
-        }
+    // 从服务器行进入 AI 助手：每个服务器一个独立 Tab 会话
+    openAIAssistant(server) {
+      if (!server.connected) return
+      const id = 'ai_' + server.id
+      let tab = this.aiTabs.find((t) => t.serverId === server.id)
+      if (!tab) {
+        tab = { id, serverId: server.id, name: server.name }
+        this.aiTabs.push(tab)
       }
+      this.activeKey = id
+    },
+
+    // 关闭 AI 标签时停止该服务器正在运行的 AI 任务（避免后台失控）
+    closeAiTab(serverId) {
+      this.aiRunningSet.delete(serverId)
+      window.dispatchEvent(new CustomEvent('ai-tab-closing', { detail: { serverId } }))
+    },
+    selectGroup(group) {
+      this.selectedGroupKeys = [group.id]
+      this.currentGroupId = group.id
+      this.currentGroupName = group.name
+      this.currentServers = [...group.servers]
     },
 
     showAddGroupModal() {
@@ -980,6 +1006,20 @@ export default {
 
     async closeTerminalTab(targetKey, action) {
       if (action !== 'remove') return
+      // AI 助手标签：关闭时停止该服务器的运行中任务
+      if (targetKey.startsWith('ai_')) {
+        const aiIndex = this.aiTabs.findIndex((t) => t.id === targetKey)
+        if (aiIndex !== -1) {
+          this.closeAiTab(this.aiTabs[aiIndex].serverId)
+          this.$nextTick(() => {
+            this.aiTabs.splice(aiIndex, 1)
+            if (this.activeKey === targetKey) {
+              this.activeKey = this.aiTabs.length > 0 ? this.aiTabs[this.aiTabs.length - 1].id : 'home'
+            }
+          })
+        }
+        return
+      }
       const tabIndex = this.terminalTabs.findIndex((tab) => tab.id === targetKey)
       if (tabIndex === -1) return
       const tab = this.terminalTabs[tabIndex]
@@ -1319,7 +1359,6 @@ export default {
     /* ========== AI 助手 ========== */
     /* ========== 脚本执行到终端（保持原逻辑） ========== */
     async handleExecuteScriptInTerminal(event) {
-      this.localCommandOutputs = []
       const script = event.detail.script
       if (!script.serverIds || script.serverIds.length === 0) {
         this.$message.error('脚本没有关联的服务器')
@@ -1359,7 +1398,6 @@ export default {
       }
       this.activeKey = tab.id
       this.pendingScript = { script, sessionId: tab.panes[0].sessionId }
-
       this.$nextTick(() => {
         const el = this.$el.querySelector('.terminal-element .xterm-helper-textarea')
         if (el) {
@@ -1383,15 +1421,20 @@ export default {
     },
 
     async sendScriptToTerminal(script, sessionId) {
+      // 执行期间锁定该终端的键盘输入，防止用户敲键干扰脚本（如 cd 改变目录）
+      window.dispatchEvent(new CustomEvent('terminal-input-lock', {
+        detail: { sessionId, locked: true }
+      }))
       try {
-        this.$message.loading('正在处理脚本命令...', 0)
         await SendScriptToTerminal(script.id, sessionId)
-        this.$message.destroy()
         this.$message.success('脚本命令已发送到终端')
       } catch (error) {
-        this.$message.destroy()
         console.error('发送脚本命令失败:', error)
         this.$message.error(`发送脚本命令失败: ${error.message}`)
+      } finally {
+        window.dispatchEvent(new CustomEvent('terminal-input-lock', {
+          detail: { sessionId, locked: false }
+        }))
       }
     },
 
@@ -1497,9 +1540,8 @@ export default {
       this.$message.success(message)
     },
     handleLocalCommandOutput(data) {
-      const { command, output } = data
-      this.localCommandOutputs.push({ command, output })
-      this.localCommandOutputVisible = true
+      // 本地命令输出直接记录进任务中心的脚本任务日志，不再弹窗遮挡界面
+      taskStore.handleLocalCommandOutput(data)
     },
     handleFileOperationError(event) {
       const { type, localPath, remotePath, error } = event.detail
@@ -1532,11 +1574,47 @@ export default {
 .main-tabs-container :deep(.ant-tabs-content) { height: 100%; }
 .main-tabs-container :deep(.ant-tabs-tabpane) { height: 100%; }
 .layout { height: 100%; }
-.group-section { padding: 16px; }
-.group-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
-.group-header h3 { margin: 0; }
-.group-actions { float: right; }
-.group-actions .anticon { margin-left: 8px; cursor: pointer; }
+.group-section { padding: 14px 12px; }
+.group-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; padding: 0 4px; }
+.group-header h3 { margin: 0; font-size: 14px; color: var(--app-text-primary, inherit); }
+.group-list { display: flex; flex-direction: column; gap: 4px; }
+.group-item {
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px 10px; border-radius: 8px; cursor: pointer;
+  border: 1px solid transparent;
+  transition: background 0.15s, border-color 0.15s;
+  user-select: none;
+}
+.group-item:hover { background: var(--app-bg-hover, rgba(128, 128, 128, 0.12)); }
+.group-item.active {
+  background: var(--app-bg-active, rgba(22, 119, 255, 0.12));
+  border-color: var(--app-border-active, #1677ff);
+}
+.group-icon { font-size: 15px; color: #faad14; flex-shrink: 0; }
+.group-name {
+  flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-size: 13.5px; color: var(--app-text-primary, inherit);
+}
+.group-count {
+  flex-shrink: 0; min-width: 20px; text-align: center;
+  font-size: 11.5px; line-height: 18px; padding: 0 6px;
+  border-radius: 9px; background: var(--app-bg-hover, rgba(128, 128, 128, 0.2));
+  color: var(--app-text-secondary, #999);
+}
+.group-item.active .group-count { background: rgba(22, 119, 255, 0.25); color: #1677ff; }
+.group-actions {
+  flex-shrink: 0; display: none; align-items: center; gap: 8px;
+  color: var(--app-text-secondary, #999); font-size: 13px;
+}
+.group-item:hover .group-actions { display: inline-flex; }
+.group-actions .anticon { cursor: pointer; }
+.group-actions .anticon:hover { color: #1677ff; }
+.group-actions .anticon.danger:hover { color: #ff4d4f; }
+.group-empty {
+  text-align: center; color: var(--app-text-secondary, #999); font-size: 12.5px;
+  padding: 24px 0; line-height: 1.9;
+  border: 1px dashed var(--app-border, #444); border-radius: 8px;
+}
 .content { padding: 16px; }
 
 .server-header { display: flex; align-items: center; margin-bottom: 12px; flex-wrap: wrap; }
@@ -1548,7 +1626,7 @@ export default {
   border: 1px solid transparent;
 }
 .terminal-pane.active { border-color: #1890ff; }
-.terminal-pane + .terminal-pane { border-left: 1px solid #333; }
+.terminal-pane + .terminal-pane { border-left: 1px solid var(--app-border, #333); }
 .pane-bar {
   display: flex; align-items: center; justify-content: space-between;
   padding: 2px 8px; background: #252526; color: #bbb; font-size: 12px; user-select: none;
@@ -1563,23 +1641,6 @@ export default {
 }
 .broadcast-list { margin-top: 12px; max-height: 320px; overflow-y: auto; }
 .broadcast-item { padding: 4px 0; }
-
-.local-command-output { padding: 8px; }
-.output-container { max-height: 60vh; overflow-y: auto; }
-.command-item { margin-bottom: 20px; padding-bottom: 16px; border-bottom: 1px dashed #d9d9d9; }
-.command-item:last-child { margin-bottom: 0; padding-bottom: 0; border-bottom: none; }
-.command-header { margin-bottom: 8px; }
-.command-number {
-  display: inline-block; width: 24px; height: 24px; line-height: 24px; text-align: center;
-  background-color: #1890ff; color: white; border-radius: 50%; font-size: 12px; margin-right: 8px;
-}
-.command-header code { margin-left: 8px; color: #1890ff; font-family: 'Monaco', 'Menlo', monospace; }
-.output-header { margin-bottom: 8px; color: #666; }
-.output-content {
-  margin: 0; padding: 12px; background-color: #1f1f1f; color: #e8e8e8; border-radius: 4px;
-  font-family: 'Monaco', 'Menlo', monospace; font-size: 13px; line-height: 1.5;
-  white-space: pre-wrap; word-break: break-all; max-height: 40vh; overflow-y: auto;
-}
 
 /* AI 任务运行中 Tab 徽标 */
 .ai-running-dot {

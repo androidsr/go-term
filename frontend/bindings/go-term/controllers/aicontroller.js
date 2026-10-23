@@ -58,13 +58,16 @@ export function SaveAIConfig(cfg) {
 
 /**
  * StartAITask 启动一个 AI 运维任务（异步执行，事件通过 ai-event 推送）
+ * mode: "exec"=后台执行（默认）；"interactive"=终端交互（模拟人工输入，sessionID 为目标终端会话）
  * 返回 taskID
  * @param {string} serverID
  * @param {string} task
+ * @param {string} mode
+ * @param {string} sessionID
  * @returns {$CancellablePromise<string>}
  */
-export function StartAITask(serverID, task) {
-    return $Call.ByID(2635305935, serverID, task);
+export function StartAITask(serverID, task, mode, sessionID) {
+    return $Call.ByID(2635305935, serverID, task, mode, sessionID);
 }
 
 /**

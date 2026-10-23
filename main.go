@@ -31,7 +31,7 @@ func main() {
 	app.RegisterService(application.NewService(controllers.NewAIController(app, sshController)))
 
 	app.Window.NewWithOptions(application.WebviewWindowOptions{
-		Title:            "那个谁SSH终端",
+		Title:            "智能运维终端*那个谁",
 		Width:            1280,
 		Height:           820,
 		MinWidth:         900,
@@ -39,14 +39,14 @@ func main() {
 		StartState:       application.WindowStateMaximised,
 		BackgroundColour: application.NewRGB(20, 20, 20),
 		Windows: application.WindowsWindow{
-			Theme: application.Dark,
+			Theme: application.Light,
 		},
 	})
 
 	// 系统托盘：SSH 终端工具常驻托盘，提供快速显示/退出入口
 	systray := app.SystemTray.New()
 	systray.SetIcon(appIcon)
-	systray.SetLabel("那个谁SSH终端")
+	systray.SetLabel("智能运维终端*那个谁")
 
 	trayMenu := app.NewMenu()
 	trayMenu.Add("显示主窗口").OnClick(func(ctx *application.Context) {

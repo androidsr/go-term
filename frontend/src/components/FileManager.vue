@@ -28,7 +28,7 @@
           </div>
 
           <a-table :dataSource="displayFileList" :columns="fileColumns" :pagination="false" rowKey="name" :loading="loading"
-            :scroll="{ y: 'calc(100vh - 220px)' }" size="small">
+            :scroll="{ y: 'calc(100vh - 220px)' }" :size="tableSize">
             <template #bodyCell="{ column, record }">
               <template v-if="column.dataIndex === 'name'">
                 <div class="file-name-cell">
@@ -94,6 +94,7 @@ import {
 import { OpenFileDialog, SaveFileDialog } from '../../bindings/go-term/app'
 import { Events } from '@wailsio/runtime'
 import { taskStore, newUID } from '../store/taskStore.js'
+import { settingsStore } from '../store/settingsStore.js'
 
 export default {
   name: 'FileManager',
@@ -132,6 +133,11 @@ export default {
   computed: {
     isRootDirectory() {
       return this.currentPath === '/' || this.currentPath === ''
+    },
+    // 表格尺寸跟随设置中的组件大小（小/中/大 → antd 表格 small/middle/default）
+    tableSize() {
+      const s = settingsStore.componentSize
+      return s === 'small' ? 'small' : s === 'large' ? 'default' : 'middle'
     },
     displayFileList() {
       const kw = (this.searchKeyword || '').trim().toLowerCase()
@@ -290,7 +296,7 @@ export default {
         total: 0,
         transferred: 0
       })
-      taskStore.openDrawer('transfer')
+      // 后台任务化：不自动弹出任务中心，完成后消息提示，可随时在任务中心查看
       UploadFileWithProgress(this.serverId, taskID, localPath, remotePath)
         .then(() => {
           taskStore.updateTransfer(taskID, { percent: 100, status: 'success' })
@@ -326,7 +332,6 @@ export default {
             total: file.size || 0,
             transferred: 0
           })
-          taskStore.openDrawer('transfer')
           DownloadFileWithProgress(this.serverId, taskID, file.path, localPath)
             .then(() => {
               taskStore.updateTransfer(taskID, { percent: 100, status: 'success' })

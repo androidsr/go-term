@@ -462,6 +462,17 @@ export function GetServerGroups() {
 }
 
 /**
+ * GetServerTerminalSessions 获取某服务器当前所有活跃终端会话的 ID 列表
+ * @param {string} serverID
+ * @returns {$CancellablePromise<string[]>}
+ */
+export function GetServerTerminalSessions(serverID) {
+    return $Call.ByID(1065356438, serverID).then(/** @type {($result: any) => any} */(($result) => {
+        return $$createType0($result);
+    }));
+}
+
+/**
  * GetSnippets 获取全部片段
  * @returns {$CancellablePromise<models$0.Snippet[]>}
  */
@@ -478,6 +489,17 @@ export function GetSnippets() {
  */
 export function GetTerminalLastOutput(sessionID) {
     return $Call.ByID(3010203733, sessionID);
+}
+
+/**
+ * GetTerminalSession 获取指定的终端会话（供 AI 交互模式等复用）
+ * @param {string} sessionID
+ * @returns {$CancellablePromise<services$0.TerminalSession | null>}
+ */
+export function GetTerminalSession(sessionID) {
+    return $Call.ByID(2311778340, sessionID).then(/** @type {($result: any) => any} */(($result) => {
+        return $$createType17($result);
+    }));
 }
 
 /**
@@ -528,7 +550,7 @@ export function IsTerminalSessionActive(sessionID) {
  */
 export function ListDirectory(serverID, path) {
     return $Call.ByID(308139975, serverID, path).then(/** @type {($result: any) => any} */(($result) => {
-        return $$createType17($result);
+        return $$createType19($result);
     }));
 }
 
@@ -539,7 +561,7 @@ export function ListDirectory(serverID, path) {
  */
 export function ListPortForwards(serverID) {
     return $Call.ByID(2715024629, serverID).then(/** @type {($result: any) => any} */(($result) => {
-        return $$createType19($result);
+        return $$createType21($result);
     }));
 }
 
@@ -678,7 +700,9 @@ const $$createType12 = models$0.ServerGroup.createFrom;
 const $$createType13 = $Create.Array($$createType12);
 const $$createType14 = models$0.Snippet.createFrom;
 const $$createType15 = $Create.Array($$createType14);
-const $$createType16 = services$0.FileInfo.createFrom;
-const $$createType17 = $Create.Array($$createType16);
-const $$createType18 = services$0.PortForward.createFrom;
+const $$createType16 = services$0.TerminalSession.createFrom;
+const $$createType17 = $Create.Nullable($$createType16);
+const $$createType18 = services$0.FileInfo.createFrom;
 const $$createType19 = $Create.Array($$createType18);
+const $$createType20 = services$0.PortForward.createFrom;
+const $$createType21 = $Create.Array($$createType20);

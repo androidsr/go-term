@@ -17,7 +17,7 @@
       :columns="columns"
       :pagination="{ pageSize: 10 }"
       rowKey="id"
-      size="small"
+      :size="tableSize"
     >
       <template #bodyCell="{ column, record }">
         <template v-if="column.dataIndex === 'serverName'">
@@ -94,6 +94,7 @@ import {
   GetServerGroups
 } from '../../bindings/go-term/controllers/sshcontroller'
 import { PlusOutlined, CopyOutlined } from '@ant-design/icons-vue'
+import { settingsStore } from '../store/settingsStore.js'
 
 export default {
   name: 'OpsConfigManager',
@@ -119,6 +120,11 @@ export default {
     }
   },
   computed: {
+    // 表格尺寸跟随设置中的组件大小（小/中/大 → antd 表格 small/middle/default）
+    tableSize() {
+      const s = settingsStore.componentSize
+      return s === 'small' ? 'small' : s === 'large' ? 'default' : 'middle'
+    },
     filteredConfigs() {
       const kw = (this.searchKeyword || '').toLowerCase()
       if (!kw) return this.configs

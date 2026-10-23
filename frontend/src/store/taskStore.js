@@ -11,6 +11,7 @@ export const taskStore = reactive({
   transfers: [], // 文件上传/下载任务
   scripts: [],   // 批量脚本执行任务
   unread: 0,
+  scriptTaskIndex: {}, // scriptID -> taskId（本地命令日志路由用）
 
   openDrawer(tab) {
     if (tab) this.activeTab = tab;
@@ -122,6 +123,62 @@ export const taskStore = reactive({
 
   removeScriptTask(id) {
     this.scripts = this.scripts.filter((x) => x.id !== id);
+    // 同步清理脚本任务索引
+    Object.keys(this.scriptTaskIndex).forEach((sid) => {
+      if (this.scriptTaskIndex[sid] === id) delete this.scriptTaskIndex[sid];
+    });
+  },
+
+  setScriptTaskId(scriptID, taskId) {
+    if (scriptID && taskId) this.scriptTaskIndex[scriptID] = taskId;
+  },
+
+  // 处理本地命令输出：路由到对应脚本任务的对应服务器日志；
+  // 找不到归属任务时归入「本地命令」汇总任务。不弹窗，任务中心可随时查看。
+  handleLocalCommandOutput(data) {
+    if (!data || !data.command) return;
+    const cmd = {
+      command: data.command,
+      output: data.output || '',
+      error: data.error || '',
+      status: data.error ? 'failed' : 'success'
+    };
+    let task = null;
+    if (data.scriptID) {
+      const taskId = this.scriptTaskIndex[data.scriptID];
+      task = taskId ? this.scripts.find((x) => x.id === taskId) : null;
+    }
+    const serverKey = data.serverID || 'local';
+    if (!task) {
+      // 汇总任务：无法归属到脚本任务的本地命令统一记录在这里
+      task = this.scripts.find((x) => x.id === 'sc_local');
+      if (!task) {
+        task = {
+          id: 'sc_local',
+          scriptID: '',
+          name: '本地命令',
+          status: 'running',
+          total: 1,
+          done: 0,
+          createdAt: new Date().toLocaleString('zh-CN'),
+          error: '',
+          servers: {}
+        };
+        this.scripts.unshift(task);
+      }
+    }
+    if (!task.servers[serverKey]) {
+      task.servers[serverKey] = {
+        serverID: serverKey,
+        serverName: data.serverName || serverKey,
+        status: 'running',
+        commandOutputs: [],
+        error: ''
+      };
+    }
+    if (cmd.error) task.servers[serverKey].error = cmd.error;
+    task.servers[serverKey].commandOutputs.push(cmd);
+    this.unread++;
   }
 });
 

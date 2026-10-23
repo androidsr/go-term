@@ -89,14 +89,21 @@ func (ac *AIController) TestAIConnection(cfg services.AIConfig) (string, error) 
 	return reply, nil
 }
 
-// aiRunner 将 SSHController 的执行能力适配为 AICommandRunner
+// aiRunner 将 SSHController 的执行能力适配为 AICommandRunner。
+// ts 非空时为"终端交互模式"：命令逐条写入真实终端会话（模拟人工输入）；
+// 否则为"后台执行模式"：直接在 SSH 连接上执行。
 type aiRunner struct {
 	ac       *AIController
 	serverID string
+	ts       *services.TerminalSession // 非空 = 交互模式
 }
 
 // Run 实现 services.AICommandRunner
 func (r *aiRunner) Run(command string, onChunk func(string), timeout time.Duration, stop <-chan struct{}) (string, int, error) {
+	if r.ts != nil {
+		// 交互模式：像人一样把命令敲进真实终端，并捕获输出
+		return r.ts.InteractiveExecute(command, onChunk, timeout, stop)
+	}
 	conn := r.ac.ssh.GetConnection(r.serverID)
 	if conn == nil || conn.Client == nil {
 		return "", -1, fmt.Errorf("服务器未连接或连接已断开")
@@ -104,9 +111,20 @@ func (r *aiRunner) Run(command string, onChunk func(string), timeout time.Durati
 	return conn.ExecuteCommandStream(command, onChunk, timeout, stop)
 }
 
+// RunDirect 实现 services.AIExecRunner：始终走后台 exec（文件工具、环境探测等精确场景）
+func (r *aiRunner) RunDirect(command string, timeout time.Duration, stop <-chan struct{}) (string, error) {
+	conn := r.ac.ssh.GetConnection(r.serverID)
+	if conn == nil || conn.Client == nil {
+		return "", fmt.Errorf("服务器未连接或连接已断开")
+	}
+	out, _, err := conn.ExecuteCommandStream(command, nil, timeout, stop)
+	return out, err
+}
+
 // StartAITask 启动一个 AI 运维任务（异步执行，事件通过 ai-event 推送）
+// mode: "exec"=后台执行（默认）；"interactive"=终端交互（模拟人工输入，sessionID 为目标终端会话）
 // 返回 taskID
-func (ac *AIController) StartAITask(serverID, task string) (string, error) {
+func (ac *AIController) StartAITask(serverID, task, mode, sessionID string) (string, error) {
 	cfg := ac.cfgMgr.Get()
 	if !cfg.Enabled {
 		return "", fmt.Errorf("AI 功能未启用，请先在设置中开启并配置大模型接口")
@@ -120,6 +138,16 @@ func (ac *AIController) StartAITask(serverID, task string) (string, error) {
 	conn := ac.ssh.GetConnection(serverID)
 	if conn == nil || conn.Client == nil {
 		return "", fmt.Errorf("服务器未连接，请先连接服务器")
+	}
+
+	runner := &aiRunner{ac: ac, serverID: serverID}
+	mode = strings.TrimSpace(strings.ToLower(mode))
+	if mode == "interactive" {
+		ts := ac.ssh.GetTerminalSession(sessionID)
+		if ts == nil || ts.IsClosed() {
+			return "", fmt.Errorf("终端会话不存在或已关闭，请先打开该服务器的终端并选择会话")
+		}
+		runner.ts = ts
 	}
 
 	// 不允许同一服务器并行多个任务
@@ -147,7 +175,7 @@ func (ac *AIController) StartAITask(serverID, task string) (string, error) {
 	}
 	ac.mu.Unlock()
 
-	agent := services.NewAIAgent(taskID, cfg, &aiRunner{ac: ac, serverID: serverID}, func(event string, data interface{}) {
+	agent := services.NewAIAgent(taskID, cfg, runner, func(event string, data interface{}) {
 		if ac.app != nil {
 			ac.app.Event.Emit(event, data)
 		}
@@ -167,7 +195,7 @@ func (ac *AIController) StartAITask(serverID, task string) (string, error) {
 		// start 事件带上实际使用的接口与模型，便于前端诊断配置是否正确加载
 		ac.app.Event.Emit("ai-event", map[string]interface{}{
 			"taskID": taskID, "type": "start", "serverID": serverID, "task": task,
-			"endpoint": cfg.BaseURL, "model": cfg.Model,
+			"endpoint": cfg.BaseURL, "model": cfg.Model, "mode": mode,
 		})
 		agent.Run(task)
 

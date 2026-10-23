@@ -6,5 +6,6 @@ export {
     AIConfig,
     FileInfo,
     PortForward,
-    SSHConnection
+    SSHConnection,
+    TerminalSession
 } from "./models.js";

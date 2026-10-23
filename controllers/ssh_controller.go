@@ -619,6 +619,32 @@ func (sc *SSHController) isSessionActive(session *services.TerminalSession) bool
 	}
 }
 
+// GetTerminalSession 获取指定的终端会话（供 AI 交互模式等复用）
+func (sc *SSHController) GetTerminalSession(sessionID string) *services.TerminalSession {
+	sc.mutex.RLock()
+	defer sc.mutex.RUnlock()
+	if ts, ok := sc.terminalSessions[sessionID]; ok {
+		return ts
+	}
+	return nil
+}
+
+// GetServerTerminalSessions 获取某服务器当前所有活跃终端会话的 ID 列表
+func (sc *SSHController) GetServerTerminalSessions(serverID string) []string {
+	sc.mutex.RLock()
+	defer sc.mutex.RUnlock()
+	var ids []string
+	for sid, srv := range sc.sessionServer {
+		if srv != serverID {
+			continue
+		}
+		if ts := sc.terminalSessions[sid]; ts != nil && !ts.IsClosed() {
+			ids = append(ids, sid)
+		}
+	}
+	return ids
+}
+
 // CreateTerminalSessionWithSize 创建指定尺寸的终端会话，返回唯一 sessionID
 // 一个服务器可创建多个终端会话（支持"复制会话"）。
 func (sc *SSHController) CreateTerminalSessionWithSize(serverID string, width, height int) (string, error) {
@@ -1964,20 +1990,24 @@ func (sc *SSHController) SendScriptToTerminal(scriptID string, sessionID string)
 		if parsedCmd.CommandType == "local" {
 			// 在本地执行命令
 			output, err := sc.enhancedExecutor.HandleLocalCommand(parsedCmd.Command)
+			errText := ""
 			if err != nil {
 				fmt.Printf("本地命令执行失败: %v\n", err)
 				// 即使有错误也要显示命令
 				output = fmt.Sprintf("执行错误: %v", err)
+				errText = err.Error()
 			}
-			// 在前端弹出窗口显示本地命令的输出
-			// 始终发送事件，即使没有输出也显示命令
+			// 发送事件到前端，记录进任务中心的脚本任务日志（不再弹窗遮挡界面）
 			displayOutput := output
 			if displayOutput == "" {
 				displayOutput = "(无输出)"
 			}
 			sc.app.Event.Emit("local-command-output", map[string]interface{}{
-				"command": "!" + parsedCmd.Command,
-				"output":  displayOutput,
+				"command":  "!" + parsedCmd.Command,
+				"output":   displayOutput,
+				"error":    errText,
+				"scriptID": scriptID,
+				"serverID": serverID,
 			})
 			time.Sleep(500 * time.Millisecond)
 			continue

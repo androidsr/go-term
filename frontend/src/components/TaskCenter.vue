@@ -10,7 +10,7 @@
       <!-- 文件传输任务 -->
       <a-tab-pane key="transfer" :tab="`传输任务 (${taskStore.transfers.length})`">
         <a-empty v-if="taskStore.transfers.length === 0" description="暂无传输任务" />
-        <a-list :dataSource="taskStore.transfers" item-layout="vertical" size="small">
+        <a-list :dataSource="taskStore.transfers" item-layout="vertical" :size="listSize">
           <template #renderItem="{ item }">
             <a-list-item>
               <div class="task-row">
@@ -56,7 +56,7 @@
       <!-- 批量脚本任务 -->
       <a-tab-pane key="script" :tab="`脚本任务 (${taskStore.scripts.length})`">
         <a-empty v-if="taskStore.scripts.length === 0" description="暂无脚本任务" />
-        <a-list :dataSource="taskStore.scripts" item-layout="vertical" size="small">
+        <a-list :dataSource="taskStore.scripts" item-layout="vertical" :size="listSize">
           <template #renderItem="{ item }">
             <a-list-item>
               <div class="task-row">
@@ -76,7 +76,9 @@
                   <a-button type="link" size="small" danger @click="taskStore.removeScriptTask(item.id)">移除</a-button>
                 </div>
 
-                <a-collapse ghost :bordered="false" size="small">
+                <a-collapse ghost :bordered="false" size="small"
+                  :activeKey="activeServerKeys(item)"
+                  @change="(keys) => onServerPanelChange(item, keys)">
                   <a-collapse-panel
                     v-for="srv in serverList(item)"
                     :key="srv.serverID"
@@ -112,6 +114,7 @@
 <script>
 import { UploadOutlined, DownloadOutlined, CodeOutlined } from '@ant-design/icons-vue'
 import { taskStore } from '../store/taskStore.js'
+import { settingsStore } from '../store/settingsStore.js'
 
 export default {
   name: 'TaskCenter',
@@ -122,12 +125,31 @@ export default {
   },
   data() {
     return {
-      taskStore
+      taskStore,
+      // 用户手动展开/收起过的任务面板（taskId -> [serverID]）；未手动操作的任务
+      // 默认自动展开"执行中"的服务器日志，方便点击任务即看到日志
+      manualExpanded: {}
+    }
+  },
+  computed: {
+    // 列表尺寸跟随设置中的组件大小
+    listSize() {
+      const s = settingsStore.componentSize
+      return s === 'large' ? 'default' : 'small'
     }
   },
   methods: {
     serverList(item) {
       return Object.values(item.servers || {})
+    },
+    activeServerKeys(item) {
+      if (this.manualExpanded[item.id]) return this.manualExpanded[item.id]
+      return this.serverList(item)
+        .filter((s) => s.status === 'running')
+        .map((s) => s.serverID)
+    },
+    onServerPanelChange(item, keys) {
+      this.manualExpanded[item.id] = Array.isArray(keys) ? keys : [keys]
     }
   }
 }
@@ -158,7 +180,7 @@ export default {
   align-items: center;
   gap: 12px;
   font-size: 12px;
-  color: #888;
+  color: var(--app-text-secondary, #888);
   margin: 4px 0;
 }
 .task-error {
@@ -188,8 +210,9 @@ export default {
 .log-pre {
   margin: 4px 0 0 0;
   padding: 8px;
-  background: #1f1f1f;
-  color: #e8e8e8;
+  background: var(--app-bg-code, #1f1f1f);
+  color: var(--app-code-text, #e8e8e8);
+  border: 1px solid var(--app-border-secondary, transparent);
   border-radius: 4px;
   font-family: 'Courier New', monospace;
   font-size: 12px;

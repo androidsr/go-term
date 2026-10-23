@@ -13,7 +13,7 @@
       </a-badge>
     </div>
 
-    <a-table :dataSource="filteredScripts" :columns="scriptColumns" :pagination="{ pageSize: 10 }" rowKey="id" size="small">
+    <a-table :dataSource="filteredScripts" :columns="scriptColumns" :pagination="{ pageSize: 10 }" rowKey="id" :size="tableSize">
       <template #bodyCell="{ column, record }">
         <template v-if="column.dataIndex === 'content'">
           <a-tooltip :title="record.content">
@@ -111,6 +111,7 @@ import {
   UnorderedListOutlined
 } from '@ant-design/icons-vue'
 import { taskStore, newUID } from '../store/taskStore.js'
+import { settingsStore } from '../store/settingsStore.js'
 
 export default {
   name: 'BatchScriptManager',
@@ -151,6 +152,11 @@ export default {
   computed: {
     taskStore() {
       return taskStore
+    },
+    // 表格尺寸跟随设置中的组件大小（小/中/大 → antd 表格 small/middle/default）
+    tableSize() {
+      const s = settingsStore.componentSize
+      return s === 'small' ? 'small' : s === 'large' ? 'default' : 'middle'
     },
     filteredScripts() {
       if (!this.searchKeyword) return this.scripts
@@ -303,7 +309,11 @@ export default {
         total: (script.serverIds || []).length,
         servers
       })
-      taskStore.openDrawer('script')
+      // 注册脚本ID -> 任务ID 索引：脚本中的本地命令日志据此路由到本任务
+      taskStore.setScriptTaskId(script.id, taskId)
+      // 不再自动弹出任务中心遮挡界面：作为后台任务执行，
+      // 点击右上角「任务中心」可随时查看每台服务器的执行日志
+      this.$message.info('脚本已提交后台执行，可在「任务中心」查看实时日志')
 
       try {
         await ExecuteBatchScript(script.id)
@@ -344,6 +354,7 @@ export default {
         done: 0,
         servers
       })
+      taskStore.setScriptTaskId(data.scriptID, taskId)
     },
 
     onScriptTaskUpdate(data) {
